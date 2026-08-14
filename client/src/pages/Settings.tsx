@@ -8,7 +8,7 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api<Settings>("/settings").then(setS).catch(() => {});
+    api<Settings>("/settings").then(setS).catch(() => { });
   }, []);
 
   async function save(e: React.FormEvent) {
@@ -86,6 +86,76 @@ export default function SettingsPage() {
               value={s.handoffKeywords.join(", ")}
               onChange={(e) => setS({ ...s, handoffKeywords: e.target.value.split(",").map((k) => k.trim()).filter(Boolean) })}
             />
+          </div>
+        </div>
+
+        {/* ── Quality & compliance ── */}
+        <div className="card p-6 space-y-4">
+          <div>
+            <h2 className="font-semibold">Quality &amp; compliance</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              These limits protect your numbers' quality rating. Meta downgrades numbers that get blocked or
+              reported, which cuts your messaging limit.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="label">Max AI replies per chat per hour</label>
+              <input
+                className="input"
+                type="number"
+                value={s.maxAiRepliesPerHour}
+                onChange={(e) => setS({ ...s, maxAiRepliesPerHour: parseInt(e.target.value) || 20 })}
+              />
+            </div>
+            <div>
+              <label className="label">Max reply length (characters)</label>
+              <input
+                className="input"
+                type="number"
+                value={s.maxReplyChars}
+                onChange={(e) => setS({ ...s, maxReplyChars: parseInt(e.target.value) || 900 })}
+              />
+            </div>
+            <div>
+              <label className="label">Max marketing messages per contact per day</label>
+              <input
+                className="input"
+                type="number"
+                value={s.maxMarketingPerContactPerDay}
+                onChange={(e) => setS({ ...s, maxMarketingPerContactPerDay: parseInt(e.target.value) || 2 })}
+              />
+            </div>
+            <div>
+              <label className="label">Pause AI after a human replies (minutes)</label>
+              <input
+                className="input"
+                type="number"
+                value={s.pauseAiAfterHumanReplyMinutes}
+                onChange={(e) => setS({ ...s, pauseAiAfterHumanReplyMinutes: parseInt(e.target.value) || 0 })}
+              />
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              className="w-4 h-4 accent-emerald-600"
+              checked={s.blockSendOnRedQuality}
+              onChange={(e) => setS({ ...s, blockSendOnRedQuality: e.target.checked })}
+            />
+            Automatically pause marketing sends when a number's quality drops to RED
+          </label>
+          <div>
+            <label className="label">Opt-out keywords (customer messages that stop everything)</label>
+            <input
+              className="input"
+              value={s.optOutKeywords.join(", ")}
+              onChange={(e) => setS({ ...s, optOutKeywords: e.target.value.split(",").map((k) => k.trim()).filter(Boolean) })}
+            />
+          </div>
+          <div>
+            <label className="label">Opt-out confirmation message</label>
+            <input className="input" value={s.optOutReply} onChange={(e) => setS({ ...s, optOutReply: e.target.value })} />
           </div>
         </div>
 

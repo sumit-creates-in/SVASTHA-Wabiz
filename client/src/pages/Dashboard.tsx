@@ -1,7 +1,21 @@
 import { useEffect, useState } from "react";
-import { MessageSquare, Users, Bot, Inbox as InboxIcon } from "lucide-react";
+import { MessageSquare, Users, Bot, Inbox as InboxIcon, ShieldAlert, UserMinus } from "lucide-react";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import type { AnalyticsOverview } from "../types";
+
+const qualityDot: Record<string, string> = {
+  GREEN: "bg-emerald-500",
+  YELLOW: "bg-amber-500",
+  RED: "bg-red-500",
+  UNKNOWN: "bg-slate-300"
+};
+const qualityLabel: Record<string, string> = {
+  GREEN: "High",
+  YELLOW: "Medium",
+  RED: "Low",
+  UNKNOWN: "Unknown"
+};
 
 function Stat({ icon: Icon, label, value, hint }: { icon: any; label: string; value: string | number; hint?: string }) {
   return (
@@ -22,7 +36,7 @@ export default function Dashboard() {
   const [data, setData] = useState<AnalyticsOverview | null>(null);
 
   useEffect(() => {
-    api<AnalyticsOverview>("/analytics/overview").then(setData).catch(() => {});
+    api<AnalyticsOverview>("/analytics/overview").then(setData).catch(() => { });
   }, []);
 
   const days: string[] = [];
@@ -57,6 +71,42 @@ export default function Dashboard() {
           value={data ? `${data.automationRate}%` : "–"}
           hint={data ? `${data.aiReplies} AI replies` : undefined}
         />
+        <Stat icon={ShieldAlert} label="Waiting on a human" value={data?.needsHuman ?? "–"} />
+        <Stat icon={UserMinus} label="Opted out" value={data?.optedOut ?? "–"} />
+      </div>
+
+      {/* Number health */}
+      <div className="card p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold">Number health</h2>
+          <Link to="/numbers" className="text-sm text-brand-600 hover:underline">
+            Manage numbers →
+          </Link>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {(data?.numbers || []).map((n) => (
+            <div key={n._id} className="border border-slate-200 rounded-lg p-4 flex items-center justify-between">
+              <div>
+                <div className="font-medium text-sm">{n.displayPhoneNumber || n.label}</div>
+                <div className="text-xs text-slate-500">{n.label}</div>
+              </div>
+              <div className="text-right text-xs">
+                <div className="flex items-center gap-1.5 justify-end">
+                  <span className={`w-2 h-2 rounded-full ${qualityDot[n.qualityRating] || qualityDot.UNKNOWN}`} />
+                  <span className="font-medium">{qualityLabel[n.qualityRating] || "Unknown"} quality</span>
+                </div>
+                <div className="text-slate-500 mt-0.5">
+                  {n.messagingLimit} · {n.sentToday} sent today
+                </div>
+              </div>
+            </div>
+          ))}
+          {(!data?.numbers || data.numbers.length === 0) && (
+            <p className="text-sm text-slate-400 col-span-full">
+              No numbers connected yet — <Link to="/numbers" className="text-brand-600 hover:underline">add one</Link>.
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="card p-6">

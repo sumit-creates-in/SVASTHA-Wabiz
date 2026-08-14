@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Plus, Send, XCircle, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import { getSocket } from "../lib/socket";
-import type { Broadcast, Template } from "../types";
+import type { Broadcast, Template, WabaNumber } from "../types";
 
 const statusColor: Record<string, string> = {
   draft: "bg-slate-100 text-slate-600",
@@ -16,9 +16,11 @@ const statusColor: Record<string, string> = {
 export default function Broadcasts() {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [numbers, setNumbers] = useState<WabaNumber[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({
     name: "",
+    number: "",
     templateName: "",
     templateLanguage: "en",
     bodyParams: "",
@@ -32,7 +34,8 @@ export default function Broadcasts() {
 
   useEffect(() => {
     load();
-    api<Template[]>("/templates").then(setTemplates).catch(() => {});
+    api<Template[]>("/templates").then(setTemplates).catch(() => { });
+    api<WabaNumber[]>("/numbers").then(setNumbers).catch(() => { });
     const socket = getSocket();
     const onUpdate = () => load();
     socket.on("broadcast:update", onUpdate);
@@ -50,6 +53,7 @@ export default function Broadcasts() {
       method: "POST",
       body: {
         name: form.name,
+        number: form.number || undefined,
         templateName: form.templateName,
         templateLanguage: tpl?.language || form.templateLanguage,
         bodyParams: form.bodyParams ? form.bodyParams.split("|").map((p) => p.trim()) : [],
@@ -58,7 +62,7 @@ export default function Broadcasts() {
       }
     });
     setShowNew(false);
-    setForm({ name: "", templateName: "", templateLanguage: "en", bodyParams: "", audienceTags: "", scheduledAt: "" });
+    setForm({ name: "", number: "", templateName: "", templateLanguage: "en", bodyParams: "", audienceTags: "", scheduledAt: "" });
     load();
   }
 
@@ -96,6 +100,17 @@ export default function Broadcasts() {
           <div>
             <label className="label">Campaign name</label>
             <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          </div>
+          <div>
+            <label className="label">Send from number</label>
+            <select className="input" value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })}>
+              <option value="">First active number</option>
+              {numbers.map((n) => (
+                <option key={n._id} value={n._id}>
+                  {n.label} · {n.displayPhoneNumber}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="label">Template (approved on Meta)</label>
@@ -146,6 +161,7 @@ export default function Broadcasts() {
               <div><div className="text-base font-bold text-slate-800">{b.stats.delivered}</div>delivered</div>
               <div><div className="text-base font-bold text-slate-800">{b.stats.read}</div>read</div>
               <div><div className="text-base font-bold text-red-600">{b.stats.failed}</div>failed</div>
+              <div><div className="text-base font-bold text-slate-400">{b.stats.skipped ?? 0}</div>skipped</div>
             </div>
             <div className="flex gap-2">
               {(b.status === "draft" || b.status === "scheduled") && (

@@ -7,7 +7,9 @@ import {
   BookOpen,
   Settings as SettingsIcon,
   LayoutDashboard,
-  LogOut
+  LogOut,
+  Phone,
+  Webhook
 } from "lucide-react";
 import { getToken, clearToken } from "./lib/api";
 import { resetSocket } from "./lib/socket";
@@ -19,11 +21,15 @@ import Broadcasts from "./pages/Broadcasts";
 import Templates from "./pages/Templates";
 import Knowledge from "./pages/Knowledge";
 import SettingsPage from "./pages/Settings";
+import Numbers from "./pages/Numbers";
+import WorkflowsPage from "./pages/Workflows";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/inbox", label: "Inbox", icon: MessageSquare },
   { to: "/contacts", label: "Contacts", icon: Users },
+  { to: "/numbers", label: "Numbers", icon: Phone },
+  { to: "/workflows", label: "Workflows", icon: Webhook },
   { to: "/broadcasts", label: "Broadcasts", icon: Megaphone },
   { to: "/templates", label: "Templates", icon: FileText },
   { to: "/knowledge", label: "AI Knowledge", icon: BookOpen },
@@ -46,8 +52,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               to={to}
               end={to === "/"}
               className={({ isActive }) =>
-                `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                  isActive ? "bg-brand-600 text-white" : "text-brand-100/80 hover:bg-white/10"
+                `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${isActive ? "bg-brand-600 text-white" : "text-brand-100/80 hover:bg-white/10"
                 }`
               }
             >
@@ -83,6 +88,8 @@ export default function App() {
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/inbox" element={<Protected><Inbox /></Protected>} />
       <Route path="/contacts" element={<Protected><Contacts /></Protected>} />
+      <Route path="/numbers" element={<Protected><Numbers /></Protected>} />
+      <Route path="/workflows" element={<Protected><WorkflowsPage /></Protected>} />
       <Route path="/broadcasts" element={<Protected><Broadcasts /></Protected>} />
       <Route path="/templates" element={<Protected><Templates /></Protected>} />
       <Route path="/knowledge" element={<Protected><Knowledge /></Protected>} />

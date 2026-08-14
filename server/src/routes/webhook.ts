@@ -1,11 +1,15 @@
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { env } from "../config/env";
-import { handleInboundMessage, handleStatusUpdate } from "../services/inbound";
+import {
+  handleInboundMessage,
+  handleStatusUpdate,
+  resolveNumber,
+} from "../services/inbound";
 
 export const webhookRouter = Router();
 
-// Meta webhook verification (GET)
+// Meta webhook verification (GET) — one URL serves every number.
 webhookRouter.get("/", (req: Request, res: Response) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -18,13 +22,17 @@ webhookRouter.get("/", (req: Request, res: Response) => {
 });
 
 function validSignature(req: Request): boolean {
-  if (!env.whatsapp.appSecret) return true; // optional
+  if (!env.whatsapp.appSecret) return true;
   const sig = req.headers["x-hub-signature-256"] as string | undefined;
   if (!sig) return false;
   const raw = (req as any).rawBody as Buffer | undefined;
   if (!raw) return true;
   const expected =
-    "sha256=" + crypto.createHmac("sha256", env.whatsapp.appSecret).update(raw).digest("hex");
+    "sha256=" +
+    crypto
+      .createHmac("sha256", env.whatsapp.appSecret)
+      .update(raw)
+      .digest("hex");
   try {
     return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
   } catch {
@@ -32,10 +40,8 @@ function validSignature(req: Request): boolean {
   }
 }
 
-// Incoming events (POST)
 webhookRouter.post("/", (req: Request, res: Response) => {
-  // Always ACK fast; process async. Meta retries if we are slow.
-  res.sendStatus(200);
+  res.sendStatus(200); // ACK fast, process async
   if (!validSignature(req)) {
     console.warn("[webhook] invalid signature, ignoring");
     return;
@@ -47,12 +53,28 @@ webhookRouter.post("/", (req: Request, res: Response) => {
     for (const entry of body.entry || []) {
       for (const change of entry.changes || []) {
         const value = change.value || {};
-        for (const msg of value.messages || []) {
-          const profile = (value.contacts || []).find((c: any) => c.wa_id === msg.from);
-          await handleInboundMessage(msg, profile);
-        }
+        const phoneNumberId: string = value.metadata?.phone_number_id;
+
         for (const status of value.statuses || []) {
           await handleStatusUpdate(status);
+        }
+
+        if (!(value.messages || []).length) continue;
+
+        const number = await resolveNumber(phoneNumberId);
+        if (!number) {
+          console.warn(
+            `[webhook] message for unknown phone_number_id ${phoneNumberId} — add it under Numbers`,
+          );
+          continue;
+        }
+        if (!number.enabled) continue;
+
+        for (const msg of value.messages) {
+          const profile = (value.contacts || []).find(
+            (c: any) => c.wa_id === msg.from,
+          );
+          await handleInboundMessage(msg, number, profile);
         }
       }
     }
