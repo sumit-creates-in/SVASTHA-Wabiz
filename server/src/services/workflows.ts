@@ -169,6 +169,18 @@ export async function fireWorkflow(
   const bodyParams = workflow.bodyParams.map((p) =>
     renderParam(p, { ...payload, name }),
   );
+
+  // For AUTHENTICATION templates the OTP code must be non-empty.
+  // Catch it here with a clear message before Meta rejects it.
+  if (
+    (tpl?.category || "").toUpperCase() === "AUTHENTICATION" &&
+    (!bodyParams.length || !bodyParams[0])
+  ) {
+    return finish(
+      "failed",
+      `OTP code is empty — check that your payload contains the field referenced in Body variables (e.g. "otp_code") and that the workflow Body variables field is set to {{otp_code}}`,
+    );
+  }
   const buttonParam = workflow.buttonUrlParam
     ? renderParam(workflow.buttonUrlParam, payload)
     : undefined;

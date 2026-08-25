@@ -482,11 +482,12 @@ function WorkflowDetail({
     if (workflow.phoneField) obj[workflow.phoneField] = "919999999999";
     if (workflow.nameField) obj[workflow.nameField] = "Test User";
     // add a placeholder for each body variable like {{otp_code}}
+    // skip pure numeric keys like {{1}} — those are template slot numbers, not payload fields
     (workflow.bodyParams || []).forEach((p) => {
       const matches = p.match(/\{\{\s*([\w.]+)\s*\}\}/g) || [];
       matches.forEach((m) => {
         const key = m.replace(/\{\{\s*|\s*\}\}/g, "");
-        if (key && !(key in obj)) obj[key] = `<${key}>`;
+        if (key && /\D/.test(key) && !(key in obj)) obj[key] = `<${key}>`;
       });
     });
     return JSON.stringify(obj, null, 2);
@@ -531,7 +532,8 @@ function WorkflowDetail({
     const matches = p.match(/\{\{\s*([\w.]+)\s*\}\}/g) || [];
     matches.forEach((m) => {
       const key = m.replace(/\{\{\s*|\s*\}\}/g, "");
-      if (key && !(key in curlPayload)) curlPayload[key] = `<${key}>`;
+      // skip pure numeric keys like {{1}} — those are template slot numbers, not payload fields
+      if (key && /\D/.test(key) && !(key in curlPayload)) curlPayload[key] = `<${key}>`;
     });
   });
   const curl = `curl -X POST '${url}' \\

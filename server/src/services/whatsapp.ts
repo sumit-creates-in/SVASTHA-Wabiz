@@ -80,15 +80,15 @@ export function sendTemplate(
   // AUTHENTICATION templates (copy-code / OTP button) require the OTP code to
   // appear in BOTH the body component AND a button component (sub_type "url",
   // index 0). Sending only the body causes Meta error #132001.
-  if (
-    (category || "").toUpperCase() === "AUTHENTICATION" &&
-    bodyParams.length
-  ) {
+  // Guard: only add the button if the OTP value is non-empty —
+  // an empty text parameter causes Meta error #100.
+  const otpCode = bodyParams[0] ?? "";
+  if ((category || "").toUpperCase() === "AUTHENTICATION" && otpCode) {
     components.push({
       type: "button",
       sub_type: "url",
       index: "0",
-      parameters: [{ type: "text", text: bodyParams[0] }],
+      parameters: [{ type: "text", text: otpCode }],
     });
   } else if (buttonUrlParam) {
     components.push({
