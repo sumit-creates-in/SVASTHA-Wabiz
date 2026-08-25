@@ -28,13 +28,15 @@ async function send(
   payload: Record<string, unknown>,
 ): Promise<SendResult> {
   try {
+    const body = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      ...payload,
+    };
+    console.log("[whatsapp] sending:", JSON.stringify(body, null, 2));
     const { data } = await api(num.tokenOverride).post(
       `/${num.phoneNumberId}/messages`,
-      {
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        ...payload,
-      },
+      body,
     );
     return { waMessageId: data?.messages?.[0]?.id };
   } catch (err: any) {
