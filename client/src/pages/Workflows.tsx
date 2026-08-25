@@ -710,8 +710,8 @@ function WorkflowDetail({
   // Build initial test payload from actual workflow fields
   function buildInitialPayload(): string {
     const obj: Record<string, string> = {};
-    if (workflow.phoneField) obj[workflow.phoneField] = "919999999999";
-    if (workflow.nameField) obj[workflow.nameField] = "Test User";
+    if (workflow.phoneField) obj[workflow.phoneField] = "918604157036";
+    if (workflow.nameField) obj[workflow.nameField] = "Sachin Gupta";
     // add a placeholder for each body variable like {{otp_code}}
     // skip pure numeric keys like {{1}} — those are template slot numbers, not payload fields
     (workflow.bodyParams || []).forEach((p) => {
