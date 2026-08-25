@@ -56,7 +56,32 @@ Fire an approved template automatically when a customer does something in your a
 - Live stats per workflow: targeted, sent, delivered, opened, failed, skipped — with the reason for every skip.
 - Built-in test runner and event log; aggregate report across all workflows.
 
-**Also included**: contacts with tags + CSV import, broadcast campaigns with segments and scheduling, template sync/creation with Meta, AI knowledge base, agents/roles, analytics dashboard.
+**AI Actions — the AI does things, not just says them**
+
+An action is a task the AI can perform. Each one becomes a tool the model can call. When a customer's message matches, the AI collects the required details conversationally, posts them to your webhook, and confirms.
+
+Two examples ship disabled, ready to edit:
+
+| Action | Fires when | What happens |
+| --- | --- | --- |
+| `book_sales_call` | A non-customer asks about a programme — "I want to know more about Ultimate 21 Day Weight Loss Challenge" | AI qualifies (programme, name, goal, preferred day/time, city), POSTs to your webhook, creates a Lead with a score, labels the chat, confirms the booking |
+| `raise_support_ticket` | An existing customer reports a problem | AI captures subject, detail, category and priority, POSTs to your webhook, creates a Ticket with a reference, confirms with that reference |
+
+Key design decision: **the AI never writes the confirmation**. It's rendered from your template and only sent after the webhook returned 2xx. If the webhook fails, the customer is never told it worked — the chat is handed to a human and flagged `action-failed`. Failed runs can be retried from the Actions page.
+
+Each action is configurable: which numbers it applies to, whether it targets leads or existing customers, the fields to collect, custom JSON payload, tags/labels to apply, and whether to hand off afterwards.
+
+**Svastha app integration**
+
+On every inbound message WABIZ can call your API to ask who the sender is. The result decides whether the AI sells or supports, and the customer's account details (plan, status, orders) are injected into the AI's context so it answers from real data instead of guessing. Configure the URL, headers and response paths in Settings, with a built-in tester.
+
+**Team management**
+
+Add team members with granular permissions across 27 keys grouped into Inbox, Contacts, Messaging, Automation and Admin. Restrict a member to specific WhatsApp numbers. Role presets (agent / manager / admin) give you a sensible starting point.
+
+**Phone number masking** — per team member. With it on, they see only the last four digits everywhere, and phone numbers written inside message text are redacted too. This happens on the server: the full number is never sent to their browser, so it can't be recovered from developer tools or a copied API token.
+
+**Also included**: contacts with tags + CSV import, broadcast campaigns with segments and scheduling, template sync/creation with Meta, AI knowledge base, leads pipeline, support tickets, analytics dashboard.
 
 ## Architecture
 
@@ -166,6 +191,37 @@ Use the built-in **Send test** button first — it fires a real message and mark
 Response codes: `200` sent, `202` skipped or failed (body explains why), `401` bad secret, `404` unknown workflow.
 
 ---
+
+## Setting up an AI action
+
+1. **AI Actions → New action** (or edit one of the two examples).
+2. **Description** is the most important field — it's what the model reads to decide whether the action applies. Be specific about when it should and shouldn't fire.
+3. **Example messages** sharpen the matching. Paste real phrasings customers use, including misspellings and Hinglish.
+4. **Fields** are what the AI must collect before firing. The description of each field is the instruction the AI follows when asking for it.
+5. **Webhook URL** receives this envelope:
+
+```json
+{
+  "event": "book_sales_call",
+  "action": "Book a sales call",
+  "firedAt": "2026-08-25T09:12:44.000Z",
+  "contact": { "name": "Asha", "phone": "919876543210", "email": null,
+               "isCustomer": false, "externalId": null, "tags": ["lead"] },
+  "channel": { "number": "+15557533653", "numberLabel": "SVASTHA Marketing",
+               "conversationId": "66c1..." },
+  "data": { "programme": "Ultimate 21 Day Weight Loss Challenge",
+            "full_name": "Asha Rao", "goal": "lose 8kg before my wedding",
+            "preferred_day": "Saturday", "preferred_time": "after 6pm",
+            "city": "Bengaluru" }
+}
+```
+
+Ticket actions also include `"ticketReference": "SVT-..."`. Set a secret and it arrives as `x-svastha-secret`. Need a different shape? Use the custom payload template with `{{field_key}}` placeholders.
+
+6. **Confirmation message** is what the customer receives — only if your webhook returned 2xx. Use `{{field_key}}`, `{{name}}`, `{{ticketReference}}`.
+7. Enable it, then message the number from your phone and watch **Recent runs**.
+
+Return a JSON body containing `id`, `ticket_id` or `reference` and WABIZ stores it against the ticket as the external ID.
 
 ## Local development
 

@@ -55,6 +55,11 @@ export interface Contact {
   optedOut: boolean;
   lastSeenAt?: string;
   createdAt?: string;
+  /** True when this viewer only sees masked digits. */
+  masked?: boolean;
+  isCustomer?: boolean;
+  externalId?: string;
+  customerData?: Record<string, string>;
 }
 
 export interface Agent {
@@ -62,6 +67,107 @@ export interface Agent {
   name: string;
   email: string;
   role: string;
+}
+
+export interface Me {
+  id: string;
+  name: string;
+  email: string;
+  role: "admin" | "manager" | "agent";
+  permissions: string[];
+  maskPhoneNumbers: boolean;
+  allowedNumbers: string[];
+}
+
+export interface PermissionDef {
+  key: string;
+  label: string;
+  group: string;
+  description: string;
+}
+
+export interface TeamMember {
+  _id: string;
+  name: string;
+  email: string;
+  role: "admin" | "manager" | "agent";
+  active: boolean;
+  permissions: string[];
+  effectivePermissions: string[];
+  allowedNumbers: { _id: string; label: string; displayPhoneNumber: string }[];
+  maskPhoneNumbers: boolean;
+  lastLoginAt?: string;
+  createdAt: string;
+}
+
+export interface ActionField {
+  key: string;
+  label: string;
+  description: string;
+  type: "string" | "number" | "date" | "enum" | "boolean";
+  options?: string[];
+  required: boolean;
+}
+
+export interface AiAction {
+  _id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  triggerExamples: string[];
+  audience: "any" | "lead" | "customer";
+  enabled: boolean;
+  numbers: { _id: string; label: string }[] | string[];
+  fields: ActionField[];
+  webhookUrl: string;
+  webhookMethod: "POST" | "PUT";
+  webhookSecret?: string;
+  payloadTemplate?: string;
+  confirmationMessage: string;
+  addTags: string[];
+  addLabels: string[];
+  createsLead: boolean;
+  createsTicket: boolean;
+  handoffAfter: boolean;
+  stats: { triggered: number; succeeded: number; failed: number };
+}
+
+export interface ActionRun {
+  _id: string;
+  actionName: string;
+  contact?: { name: string; waId: string };
+  input: Record<string, string>;
+  status: "pending" | "succeeded" | "failed";
+  responseStatus?: number;
+  error?: string;
+  createdAt: string;
+}
+
+export interface Lead {
+  _id: string;
+  contact: Contact;
+  interest: string;
+  source: string;
+  qualification: Record<string, string>;
+  score: number;
+  status: "new" | "qualified" | "call_booked" | "converted" | "lost";
+  assignedTo?: { _id: string; name: string };
+  number?: { label: string };
+  note: string;
+  createdAt: string;
+}
+
+export interface Ticket {
+  _id: string;
+  contact: Contact;
+  reference: string;
+  subject: string;
+  detail: string;
+  category: string;
+  priority: "low" | "normal" | "high" | "urgent";
+  status: "open" | "in_progress" | "resolved" | "closed";
+  assignedTo?: { _id: string; name: string };
+  createdAt: string;
 }
 
 export interface Conversation {
@@ -190,6 +296,13 @@ export interface Settings {
   conservativeOnYellowQuality: boolean;
   autoPauseMarketingOnDegrade: boolean;
   escalationMessage: string;
+  customerLookupEnabled: boolean;
+  customerLookupUrl: string;
+  customerLookupMethod: "GET" | "POST";
+  customerLookupHeaders: Record<string, string>;
+  customerLookupCacheMinutes: number;
+  customerFoundPath: string;
+  customerDataPath: string;
 }
 
 export interface Alert {

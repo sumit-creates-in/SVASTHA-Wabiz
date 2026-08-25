@@ -13,8 +13,24 @@ import {
   User,
   Alert,
   QualitySnapshot,
+  AiAction,
+  ActionRun,
+  Lead,
+  Ticket,
   getSettings
 } from "../models";
+import {
+  PERMISSIONS,
+  ROLE_PRESETS,
+  ALL_PERMISSION_KEYS,
+  effectivePermissions,
+  maskContact,
+  maskPhonesInText,
+  Viewer
+} from "../permissions";
+import { requirePermission } from "../middleware/auth";
+import { runAction, retryRun } from "../services/actions";
+import { syncCustomer } from "../services/customer";
 import * as wa from "../services/whatsapp";
 import { generateReply, classifyConversation } from "../services/ai";
 import { runBroadcast } from "../services/broadcast";
@@ -251,11 +267,19 @@ apiRouter.post("/alerts/ack-all", async (_req, res) => {
 // ════════════════════════════════════════════════════════
 // CONVERSATIONS & MESSAGES
 // ════════════════════════════════════════════════════════
-apiRouter.get("/conversations", async (req, res) => {
+apiRouter.get("/conversations", async (req: AuthedRequest, res) => {
+  const viewer = req.viewer!;
   const { status, number, label, assigned, unread, search } = req.query as Record<string, string>;
   const q: Record<string, unknown> = {};
   if (status) q.status = status;
   if (number) q.number = number;
+
+  // Restrict to the numbers this user is allowed to see.
+  if (viewer.allowedNumbers.length) {
+    q.number = number && viewer.allowedNumbers.includes(number)
+      ? number
+      : { $in: viewer.allowedNumbers };
+  }
   if (label) q.labels = label;
   if (assigned === "me") q.assignedTo = (req as AuthedRequest).userId;
   else if (assigned === "unassigned") q.assignedTo = { $exists: false };
@@ -281,19 +305,28 @@ apiRouter.get("/conversations", async (req, res) => {
   res.json(
     items.map((c) => ({
       ...c,
+      contact: maskContact(c.contact as any, viewer),
+      lastMessagePreview: viewer.maskPhoneNumbers
+        ? maskPhonesInText(c.lastMessagePreview)
+        : c.lastMessagePreview,
       insideWindow: insideWindow(c as any),
       windowRemainingMs: windowRemainingMs(c as any)
     }))
   );
 });
 
-apiRouter.get("/conversations/:id/messages", async (req, res) => {
+apiRouter.get("/conversations/:id/messages", async (req: AuthedRequest, res) => {
+  const viewer = req.viewer!;
   const items = await Message.find({ conversation: req.params.id })
     .sort({ createdAt: 1 })
     .limit(500)
     .lean();
   await Conversation.updateOne({ _id: req.params.id }, { $set: { unreadCount: 0 } });
-  res.json(items);
+  res.json(
+    viewer.maskPhoneNumbers
+      ? items.map((m) => ({ ...m, text: maskPhonesInText(m.text) }))
+      : items
+  );
 });
 
 apiRouter.patch("/conversations/:id", async (req, res) => {
@@ -453,39 +486,305 @@ apiRouter.get("/labels", async (_req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
-// AGENTS
+// TEAM
 // ════════════════════════════════════════════════════════
+
+/** Light list used for the "assign agent" dropdown — no permission needed. */
 apiRouter.get("/agents", async (_req, res) => {
   res.json(await User.find({ active: true }).select("name email role").lean());
 });
 
-apiRouter.post("/agents", async (req, res) => {
-  const { email, password, name, role } = req.body || {};
+/** The permission catalogue and role presets, for the team editor UI. */
+apiRouter.get("/team/permissions", requirePermission("team.manage"), (_req, res) => {
+  res.json({ permissions: PERMISSIONS, presets: ROLE_PRESETS });
+});
+
+apiRouter.get("/team", requirePermission("team.manage"), async (_req, res) => {
+  const users = await User.find()
+    .select("name email role active permissions allowedNumbers maskPhoneNumbers lastLoginAt createdAt")
+    .populate("allowedNumbers", "label displayPhoneNumber")
+    .sort({ createdAt: 1 })
+    .lean();
+  res.json(
+    users.map((u) => ({
+      ...u,
+      effectivePermissions: effectivePermissions(u as any)
+    }))
+  );
+});
+
+apiRouter.post("/team", requirePermission("team.manage"), async (req, res) => {
+  const { email, password, name, role, permissions, allowedNumbers, maskPhoneNumbers } = req.body || {};
   if (!email || !password) {
-    res.status(400).json({ error: "email and password required" });
+    res.status(400).json({ error: "Email and password are required" });
     return;
   }
-  const exists = await User.findOne({ email: String(email).toLowerCase() });
-  if (exists) {
-    res.status(409).json({ error: "User already exists" });
+  if (String(password).length < 6) {
+    res.status(400).json({ error: "Password must be at least 6 characters" });
     return;
   }
+  const normalised = String(email).toLowerCase().trim();
+  if (await User.findOne({ email: normalised })) {
+    res.status(409).json({ error: "A user with this email already exists" });
+    return;
+  }
+  const chosenRole = ["admin", "manager", "agent"].includes(role) ? role : "agent";
   const passwordHash = await bcrypt.hash(String(password), 10);
-  const u = await User.create({ email, passwordHash, name: name || "Agent", role: role || "agent" });
+  const u = await User.create({
+    email: normalised,
+    passwordHash,
+    name: name || "Team member",
+    role: chosenRole,
+    permissions: Array.isArray(permissions)
+      ? permissions.filter((p: string) => ALL_PERMISSION_KEYS.includes(p))
+      : ROLE_PRESETS[chosenRole] || ROLE_PRESETS.agent,
+    allowedNumbers: Array.isArray(allowedNumbers) ? allowedNumbers : [],
+    maskPhoneNumbers: !!maskPhoneNumbers
+  });
   res.json({ id: u._id, email: u.email, name: u.name, role: u.role });
+});
+
+apiRouter.patch("/team/:id", requirePermission("team.manage"), async (req: AuthedRequest, res) => {
+  const target = await User.findById(req.params.id);
+  if (!target) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  // Don't let the last admin lock everyone out.
+  const demoting = req.body?.role && req.body.role !== "admin" && target.role === "admin";
+  const deactivating = req.body?.active === false && target.active;
+  if (demoting || deactivating) {
+    const admins = await User.countDocuments({ role: "admin", active: true });
+    if (admins <= 1 && target.role === "admin") {
+      res.status(409).json({ error: "This is the last active admin — promote someone else first" });
+      return;
+    }
+  }
+
+  for (const k of ["name", "role", "active", "maskPhoneNumbers", "allowedNumbers"] as const) {
+    if (k in (req.body || {})) (target as any)[k] = req.body[k];
+  }
+  if (Array.isArray(req.body?.permissions)) {
+    target.permissions = req.body.permissions.filter((p: string) => ALL_PERMISSION_KEYS.includes(p));
+  }
+  if (req.body?.password) {
+    if (String(req.body.password).length < 6) {
+      res.status(400).json({ error: "Password must be at least 6 characters" });
+      return;
+    }
+    target.passwordHash = await bcrypt.hash(String(req.body.password), 10);
+  }
+  await target.save();
+  res.json({ ok: true });
+});
+
+apiRouter.delete("/team/:id", requirePermission("team.manage"), async (req: AuthedRequest, res) => {
+  if (String(req.params.id) === req.userId) {
+    res.status(409).json({ error: "You can't delete your own account" });
+    return;
+  }
+  const target = await User.findById(req.params.id);
+  if (target?.role === "admin") {
+    const admins = await User.countDocuments({ role: "admin", active: true });
+    if (admins <= 1) {
+      res.status(409).json({ error: "This is the last active admin" });
+      return;
+    }
+  }
+  await User.deleteOne({ _id: req.params.id });
+  res.json({ ok: true });
+});
+
+// ════════════════════════════════════════════════════════
+// AI ACTIONS
+// ════════════════════════════════════════════════════════
+apiRouter.get("/actions", requirePermission("actions.view"), async (_req, res) => {
+  res.json(await AiAction.find().sort({ createdAt: 1 }).populate("numbers", "label displayPhoneNumber").lean());
+});
+
+apiRouter.post("/actions", requirePermission("actions.manage"), async (req, res) => {
+  const b = req.body || {};
+  if (!b.name || !b.description || !b.webhookUrl) {
+    res.status(400).json({ error: "name, description and webhookUrl are required" });
+    return;
+  }
+  const name = String(b.name).toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 60);
+  if (await AiAction.findOne({ name })) {
+    res.status(409).json({ error: "An action with this name already exists" });
+    return;
+  }
+  const a = await AiAction.create({ ...b, name, displayName: b.displayName || b.name });
+  res.json(a);
+});
+
+apiRouter.patch("/actions/:id", requirePermission("actions.manage"), async (req, res) => {
+  const allowed: Record<string, unknown> = {};
+  for (const k of [
+    "displayName",
+    "description",
+    "triggerExamples",
+    "audience",
+    "enabled",
+    "numbers",
+    "fields",
+    "webhookUrl",
+    "webhookMethod",
+    "webhookHeaders",
+    "webhookSecret",
+    "payloadTemplate",
+    "confirmationMessage",
+    "addTags",
+    "addLabels",
+    "createsLead",
+    "createsTicket",
+    "handoffAfter"
+  ] as const) {
+    if (k in (req.body || {})) allowed[k] = req.body[k];
+  }
+  res.json(await AiAction.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true }).lean());
+});
+
+apiRouter.delete("/actions/:id", requirePermission("actions.manage"), async (req, res) => {
+  await AiAction.deleteOne({ _id: req.params.id });
+  res.json({ ok: true });
+});
+
+/** Fire an action against a sample payload so you can test the webhook. */
+apiRouter.post("/actions/:id/test", requirePermission("actions.manage"), async (req, res) => {
+  const action = await AiAction.findById(req.params.id);
+  if (!action) {
+    res.status(404).json({ error: "Action not found" });
+    return;
+  }
+  const conv = await Conversation.findOne().sort({ lastMessageAt: -1 }).populate("contact");
+  const number = await WabaNumber.findOne(action.numbers.length ? { _id: action.numbers[0] } : {});
+  if (!conv || !number) {
+    res.status(400).json({ error: "Need at least one conversation and one number to run a test" });
+    return;
+  }
+  const result = await runAction(action, req.body || {}, {
+    contact: conv.contact as any,
+    conversation: conv,
+    number
+  });
+  res.json(result);
+});
+
+apiRouter.get("/action-runs", requirePermission("actions.view"), async (req, res) => {
+  const q: Record<string, unknown> = {};
+  if (req.query.status) q.status = req.query.status;
+  if (req.query.action) q.action = req.query.action;
+  const items = await ActionRun.find(q)
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .populate("contact", "name waId")
+    .lean();
+  res.json(items);
+});
+
+apiRouter.post("/action-runs/:id/retry", requirePermission("actions.manage"), async (req, res) => {
+  res.json(await retryRun(req.params.id));
+});
+
+// ════════════════════════════════════════════════════════
+// LEADS
+// ════════════════════════════════════════════════════════
+apiRouter.get("/leads", requirePermission("leads.view"), async (req: AuthedRequest, res) => {
+  const viewer = req.viewer!;
+  const q: Record<string, unknown> = {};
+  if (req.query.status) q.status = req.query.status;
+  if (viewer.allowedNumbers.length) q.number = { $in: viewer.allowedNumbers };
+  const items = await Lead.find(q)
+    .sort({ createdAt: -1 })
+    .limit(300)
+    .populate("contact")
+    .populate("assignedTo", "name")
+    .populate("number", "label")
+    .lean();
+  res.json(items.map((l) => ({ ...l, contact: maskContact(l.contact as any, viewer) })));
+});
+
+apiRouter.patch("/leads/:id", requirePermission("leads.manage"), async (req, res) => {
+  const allowed: Record<string, unknown> = {};
+  for (const k of ["status", "note", "score", "interest"] as const) {
+    if (k in (req.body || {})) allowed[k] = req.body[k];
+  }
+  if ("assignedTo" in (req.body || {})) allowed.assignedTo = req.body.assignedTo || undefined;
+  res.json(await Lead.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true }).lean());
+});
+
+// ════════════════════════════════════════════════════════
+// TICKETS
+// ════════════════════════════════════════════════════════
+apiRouter.get("/tickets", requirePermission("tickets.view"), async (req: AuthedRequest, res) => {
+  const viewer = req.viewer!;
+  const q: Record<string, unknown> = {};
+  if (req.query.status) q.status = req.query.status;
+  const items = await Ticket.find(q)
+    .sort({ createdAt: -1 })
+    .limit(300)
+    .populate("contact")
+    .populate("assignedTo", "name")
+    .lean();
+  res.json(items.map((t) => ({ ...t, contact: maskContact(t.contact as any, viewer) })));
+});
+
+apiRouter.patch("/tickets/:id", requirePermission("tickets.manage"), async (req, res) => {
+  const allowed: Record<string, unknown> = {};
+  for (const k of ["status", "priority", "category", "subject", "detail"] as const) {
+    if (k in (req.body || {})) allowed[k] = req.body[k];
+  }
+  if ("assignedTo" in (req.body || {})) allowed.assignedTo = req.body.assignedTo || undefined;
+  res.json(await Ticket.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true }).lean());
+});
+
+// ════════════════════════════════════════════════════════
+// CUSTOMER LOOKUP
+// ════════════════════════════════════════════════════════
+apiRouter.post("/customer-lookup/test", requirePermission("settings.manage"), async (req, res) => {
+  const phone = String(req.body?.phone || "").replace(/[^0-9]/g, "");
+  if (!phone) {
+    res.status(400).json({ error: "phone required" });
+    return;
+  }
+  const contact = await Contact.findOneAndUpdate(
+    { waId: phone },
+    { $setOnInsert: { waId: phone } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  await syncCustomer(contact, true);
+  const data: Record<string, string> = {};
+  contact.customerData?.forEach?.((v: string, k: string) => (data[k] = v));
+  res.json({
+    isCustomer: contact.isCustomer,
+    error: contact.customerLookupError,
+    fields: data
+  });
+});
+
+apiRouter.post("/contacts/:id/refresh-customer", async (req, res) => {
+  const contact = await Contact.findById(req.params.id);
+  if (!contact) {
+    res.status(404).json({ error: "Contact not found" });
+    return;
+  }
+  await syncCustomer(contact, true);
+  res.json(contact);
 });
 
 // ════════════════════════════════════════════════════════
 // CONTACTS
 // ════════════════════════════════════════════════════════
-apiRouter.get("/contacts", async (req, res) => {
+apiRouter.get("/contacts", async (req: AuthedRequest, res) => {
+  const viewer = req.viewer!;
   const search = String(req.query.search || "").trim();
   const tag = String(req.query.tag || "").trim();
   const q: Record<string, unknown> = {};
   if (search) q.$or = [{ name: new RegExp(search, "i") }, { waId: new RegExp(search) }];
   if (tag) q.tags = tag;
   const items = await Contact.find(q).sort({ updatedAt: -1 }).limit(500).lean();
-  res.json(items);
+  res.json(items.map((c) => maskContact(c as any, viewer)));
 });
 
 apiRouter.post("/contacts", async (req, res) => {
@@ -824,7 +1123,14 @@ apiRouter.patch("/settings", async (req, res) => {
     "maxLinksPerReply",
     "conservativeOnYellowQuality",
     "autoPauseMarketingOnDegrade",
-    "escalationMessage"
+    "escalationMessage",
+    "customerLookupEnabled",
+    "customerLookupUrl",
+    "customerLookupMethod",
+    "customerLookupHeaders",
+    "customerLookupCacheMinutes",
+    "customerFoundPath",
+    "customerDataPath"
   ] as const;
   for (const k of allowed) {
     if (k in (req.body || {})) (s as any)[k] = req.body[k];

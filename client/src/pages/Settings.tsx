@@ -264,6 +264,112 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          {/* ── Svastha app integration ── */}
+          <div className="card p-6 space-y-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="font-semibold">Svastha app — customer lookup</h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  On each inbound message WABIZ asks your API who the sender is. The answer decides whether the AI
+                  treats them as a lead or an existing customer, and their account details are given to the AI so
+                  it can answer accurately instead of guessing.
+                </p>
+              </div>
+              <label className="flex items-center gap-2 text-sm cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 accent-emerald-600"
+                  checked={s.customerLookupEnabled}
+                  onChange={(e) => setS({ ...s, customerLookupEnabled: e.target.checked })}
+                />
+                Enabled
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div className="md:col-span-3">
+                <label className="label">Lookup URL — {"{{phone}}"} is replaced with the number</label>
+                <input
+                  className="input font-mono text-xs"
+                  placeholder="https://api.svastha.app/v1/customers/lookup?phone={{phone}}"
+                  value={s.customerLookupUrl}
+                  onChange={(e) => setS({ ...s, customerLookupUrl: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label">Method</label>
+                <select
+                  className="input"
+                  value={s.customerLookupMethod}
+                  onChange={(e) => setS({ ...s, customerLookupMethod: e.target.value as any })}
+                >
+                  <option value="GET">GET</option>
+                  <option value="POST">POST</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="label">Headers (one per line, Key: Value — put your API key here)</label>
+              <textarea
+                className="input font-mono text-xs"
+                rows={2}
+                placeholder="Authorization: Bearer YOUR_API_KEY"
+                value={Object.entries(s.customerLookupHeaders || {})
+                  .map(([k, v]) => `${k}: ${v}`)
+                  .join("\n")}
+                onChange={(e) => {
+                  const headers: Record<string, string> = {};
+                  e.target.value.split("\n").forEach((line) => {
+                    const idx = line.indexOf(":");
+                    if (idx > 0) headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+                  });
+                  setS({ ...s, customerLookupHeaders: headers });
+                }}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="label">"Found" field path</label>
+                <input
+                  className="input font-mono text-xs"
+                  placeholder="found"
+                  value={s.customerFoundPath}
+                  onChange={(e) => setS({ ...s, customerFoundPath: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label">Customer data path</label>
+                <input
+                  className="input font-mono text-xs"
+                  placeholder="customer"
+                  value={s.customerDataPath}
+                  onChange={(e) => setS({ ...s, customerDataPath: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label">Cache (minutes)</label>
+                <input
+                  className="input"
+                  type="number"
+                  value={s.customerLookupCacheMinutes}
+                  onChange={(e) => setS({ ...s, customerLookupCacheMinutes: parseInt(e.target.value) || 0 })}
+                />
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              Expected response shape:{" "}
+              <code className="bg-slate-100 px-1 rounded">
+                {'{ "found": true, "customer": { "name": "...", "plan": "...", "status": "active" } }'}
+              </code>
+              . Everything under the data path is flattened and shown to the AI.
+            </p>
+
+            <LookupTester />
+          </div>
+
           {/* ── Business hours ── */}
           <div className="card p-6 space-y-4">
             <div className="flex items-center justify-between">
@@ -324,6 +430,72 @@ export default function SettingsPage() {
           {busy ? "Saving…" : "Save settings"}
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Fire a real lookup so you can confirm the mapping before going live. */
+function LookupTester() {
+  const [phone, setPhone] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ isCustomer: boolean; error?: string; fields: Record<string, string> } | null>(
+    null
+  );
+
+  async function run() {
+    setBusy(true);
+    setResult(null);
+    try {
+      setResult(
+        await api<{ isCustomer: boolean; error?: string; fields: Record<string, string> }>(
+          "/customer-lookup/test",
+          { method: "POST", body: { phone } }
+        )
+      );
+    } catch (e: any) {
+      setResult({ isCustomer: false, error: e.message, fields: {} });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-slate-200 pt-4">
+      <label className="label">Test the lookup</label>
+      <div className="flex gap-2">
+        <input
+          className="input"
+          placeholder="919880024120"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+        />
+        <button type="button" className="btn-secondary shrink-0" onClick={run} disabled={!phone || busy}>
+          {busy ? "Checking…" : "Run lookup"}
+        </button>
+      </div>
+      {result && (
+        <div className="mt-3 text-xs bg-slate-50 rounded-lg p-3">
+          {result.error ? (
+            <p className="text-red-600">{result.error}</p>
+          ) : (
+            <>
+              <p className={result.isCustomer ? "text-emerald-700 font-medium" : "text-amber-700 font-medium"}>
+                {result.isCustomer ? "Matched an existing customer" : "No match — would be treated as a lead"}
+              </p>
+              {Object.keys(result.fields).length > 0 && (
+                <dl className="grid grid-cols-2 gap-1 mt-2">
+                  {Object.entries(result.fields).map(([k, v]) => (
+                    <div key={k}>
+                      <dt className="text-slate-500">{k}</dt>
+                      <dd className="font-medium">{v}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

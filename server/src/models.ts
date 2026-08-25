@@ -5,16 +5,27 @@ export interface IUser extends Document {
   email: string;
   passwordHash: string;
   name: string;
-  role: "admin" | "agent";
+  role: "admin" | "manager" | "agent";
   active: boolean;
+  /** Granular permission keys. Admins implicitly have all of them. */
+  permissions: string[];
+  /** WhatsApp numbers this user may see. Empty = all numbers. */
+  allowedNumbers: Types.ObjectId[];
+  /** Hide most digits of customer phone numbers from this user. */
+  maskPhoneNumbers: boolean;
+  lastLoginAt?: Date;
 }
 const userSchema = new Schema<IUser>(
   {
     email: { type: String, required: true, unique: true, lowercase: true },
     passwordHash: { type: String, required: true },
     name: { type: String, default: "Admin" },
-    role: { type: String, enum: ["admin", "agent"], default: "admin" },
-    active: { type: Boolean, default: true }
+    role: { type: String, enum: ["admin", "manager", "agent"], default: "agent" },
+    active: { type: Boolean, default: true },
+    permissions: { type: [String], default: [] },
+    allowedNumbers: { type: [Schema.Types.ObjectId], ref: "WabaNumber", default: [] },
+    maskPhoneNumbers: { type: Boolean, default: false },
+    lastLoginAt: Date
   },
   { timestamps: true }
 );
@@ -88,6 +99,12 @@ export interface IContact extends Document {
   lastSeenAt?: Date;
   marketingSentToday: number;
   marketingSentDate: string;
+  // ── Synced from the Svastha app ──
+  isCustomer: boolean;
+  externalId?: string;
+  customerData: Map<string, string>;
+  customerSyncedAt?: Date;
+  customerLookupError?: string;
 }
 const contactSchema = new Schema<IContact>(
   {
@@ -101,7 +118,12 @@ const contactSchema = new Schema<IContact>(
     optInSource: String,
     lastSeenAt: Date,
     marketingSentToday: { type: Number, default: 0 },
-    marketingSentDate: { type: String, default: "" }
+    marketingSentDate: { type: String, default: "" },
+    isCustomer: { type: Boolean, default: false, index: true },
+    externalId: { type: String, index: true },
+    customerData: { type: Map, of: String, default: {} },
+    customerSyncedAt: Date,
+    customerLookupError: String
   },
   { timestamps: true }
 );
@@ -370,6 +392,193 @@ const workflowEventSchema = new Schema<IWorkflowEvent>(
 );
 export const WorkflowEvent = model<IWorkflowEvent>("WorkflowEvent", workflowEventSchema);
 
+// ════════════════════════════════════════════════════════
+// AI ACTIONS — things the AI can DO, not just say.
+// Each action becomes a tool the model can call once it has collected the
+// required fields from the customer. Firing it posts to your webhook.
+// ════════════════════════════════════════════════════════
+export interface IActionField {
+  key: string;
+  label: string;
+  description: string;
+  type: "string" | "number" | "date" | "enum" | "boolean";
+  options?: string[];
+  required: boolean;
+}
+
+export interface IAiAction extends Document {
+  name: string; // machine name, e.g. book_sales_call
+  displayName: string;
+  /** Tells the model WHEN to use this. The most important field. */
+  description: string;
+  triggerExamples: string[];
+  audience: "any" | "lead" | "customer";
+  enabled: boolean;
+  numbers: Types.ObjectId[]; // empty = all numbers
+  fields: IActionField[];
+  // outbound webhook
+  webhookUrl: string;
+  webhookMethod: "POST" | "PUT";
+  webhookHeaders: Map<string, string>;
+  webhookSecret?: string;
+  /** Optional JSON template. Blank = send the standard envelope. */
+  payloadTemplate?: string;
+  // after firing
+  confirmationMessage: string;
+  addTags: string[];
+  addLabels: string[];
+  createsLead: boolean;
+  createsTicket: boolean;
+  handoffAfter: boolean;
+  stats: { triggered: number; succeeded: number; failed: number };
+}
+
+const actionFieldSchema = new Schema<IActionField>(
+  {
+    key: { type: String, required: true },
+    label: { type: String, default: "" },
+    description: { type: String, default: "" },
+    type: { type: String, enum: ["string", "number", "date", "enum", "boolean"], default: "string" },
+    options: { type: [String], default: [] },
+    required: { type: Boolean, default: true }
+  },
+  { _id: false }
+);
+
+const aiActionSchema = new Schema<IAiAction>(
+  {
+    name: { type: String, required: true, unique: true },
+    displayName: { type: String, required: true },
+    description: { type: String, required: true },
+    triggerExamples: { type: [String], default: [] },
+    audience: { type: String, enum: ["any", "lead", "customer"], default: "any" },
+    enabled: { type: Boolean, default: true },
+    numbers: { type: [Schema.Types.ObjectId], ref: "WabaNumber", default: [] },
+    fields: { type: [actionFieldSchema], default: [] },
+    webhookUrl: { type: String, required: true },
+    webhookMethod: { type: String, enum: ["POST", "PUT"], default: "POST" },
+    webhookHeaders: { type: Map, of: String, default: {} },
+    webhookSecret: String,
+    payloadTemplate: String,
+    confirmationMessage: { type: String, default: "Done — our team will be in touch shortly." },
+    addTags: { type: [String], default: [] },
+    addLabels: { type: [String], default: [] },
+    createsLead: { type: Boolean, default: false },
+    createsTicket: { type: Boolean, default: false },
+    handoffAfter: { type: Boolean, default: false },
+    stats: {
+      triggered: { type: Number, default: 0 },
+      succeeded: { type: Number, default: 0 },
+      failed: { type: Number, default: 0 }
+    }
+  },
+  { timestamps: true }
+);
+export const AiAction = model<IAiAction>("AiAction", aiActionSchema);
+
+export interface IActionRun extends Document {
+  action: Types.ObjectId;
+  actionName: string;
+  contact: Types.ObjectId;
+  conversation: Types.ObjectId;
+  number?: Types.ObjectId;
+  input: Map<string, string>;
+  payload: unknown;
+  responseStatus?: number;
+  responseBody?: string;
+  status: "pending" | "succeeded" | "failed";
+  error?: string;
+  attempts: number;
+}
+const actionRunSchema = new Schema<IActionRun>(
+  {
+    action: { type: Schema.Types.ObjectId, ref: "AiAction", required: true, index: true },
+    actionName: String,
+    contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true },
+    conversation: { type: Schema.Types.ObjectId, ref: "Conversation" },
+    number: { type: Schema.Types.ObjectId, ref: "WabaNumber" },
+    input: { type: Map, of: String, default: {} },
+    payload: Schema.Types.Mixed,
+    responseStatus: Number,
+    responseBody: String,
+    status: { type: String, default: "pending", index: true },
+    error: String,
+    attempts: { type: Number, default: 0 }
+  },
+  { timestamps: true }
+);
+export const ActionRun = model<IActionRun>("ActionRun", actionRunSchema);
+
+// ── Lead ────────────────────────────────────────────────
+export interface ILead extends Document {
+  contact: Types.ObjectId;
+  conversation?: Types.ObjectId;
+  number?: Types.ObjectId;
+  interest: string;
+  source: string;
+  qualification: Map<string, string>;
+  score: number;
+  status: "new" | "qualified" | "call_booked" | "converted" | "lost";
+  assignedTo?: Types.ObjectId;
+  note: string;
+}
+const leadSchema = new Schema<ILead>(
+  {
+    contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true, index: true },
+    conversation: { type: Schema.Types.ObjectId, ref: "Conversation" },
+    number: { type: Schema.Types.ObjectId, ref: "WabaNumber" },
+    interest: { type: String, default: "" },
+    source: { type: String, default: "whatsapp" },
+    qualification: { type: Map, of: String, default: {} },
+    score: { type: Number, default: 0 },
+    status: {
+      type: String,
+      enum: ["new", "qualified", "call_booked", "converted", "lost"],
+      default: "new",
+      index: true
+    },
+    assignedTo: { type: Schema.Types.ObjectId, ref: "User" },
+    note: { type: String, default: "" }
+  },
+  { timestamps: true }
+);
+export const Lead = model<ILead>("Lead", leadSchema);
+
+// ── Support ticket ──────────────────────────────────────
+export interface ITicket extends Document {
+  contact: Types.ObjectId;
+  conversation?: Types.ObjectId;
+  reference: string;
+  subject: string;
+  detail: string;
+  category: string;
+  priority: "low" | "normal" | "high" | "urgent";
+  status: "open" | "in_progress" | "resolved" | "closed";
+  externalId?: string;
+  assignedTo?: Types.ObjectId;
+}
+const ticketSchema = new Schema<ITicket>(
+  {
+    contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true, index: true },
+    conversation: { type: Schema.Types.ObjectId, ref: "Conversation" },
+    reference: { type: String, required: true, unique: true },
+    subject: { type: String, default: "" },
+    detail: { type: String, default: "" },
+    category: { type: String, default: "general" },
+    priority: { type: String, enum: ["low", "normal", "high", "urgent"], default: "normal" },
+    status: {
+      type: String,
+      enum: ["open", "in_progress", "resolved", "closed"],
+      default: "open",
+      index: true
+    },
+    externalId: String,
+    assignedTo: { type: Schema.Types.ObjectId, ref: "User" }
+  },
+  { timestamps: true }
+);
+export const Ticket = model<ITicket>("Ticket", ticketSchema);
+
 // ── Quality snapshots (trend tracking per number) ───────
 export interface IQualitySnapshot extends Document {
   number: Types.ObjectId;
@@ -453,6 +662,16 @@ export interface ISettings extends Document {
   conservativeOnYellowQuality: boolean;
   autoPauseMarketingOnDegrade: boolean;
   escalationMessage: string;
+  // ── Svastha app customer lookup ──
+  customerLookupEnabled: boolean;
+  customerLookupUrl: string; // {{phone}} is substituted
+  customerLookupMethod: "GET" | "POST";
+  customerLookupHeaders: Map<string, string>;
+  customerLookupCacheMinutes: number;
+  /** Dot-path in the response that indicates an existing customer. */
+  customerFoundPath: string;
+  /** Dot-path to the object of customer fields to show the AI. */
+  customerDataPath: string;
 }
 const settingsSchema = new Schema<ISettings>(
   {
@@ -502,7 +721,14 @@ const settingsSchema = new Schema<ISettings>(
       type: String,
       default:
         "Let me check that with the team and get back to you shortly — I don't want to give you the wrong information."
-    }
+    },
+    customerLookupEnabled: { type: Boolean, default: false },
+    customerLookupUrl: { type: String, default: "" },
+    customerLookupMethod: { type: String, enum: ["GET", "POST"], default: "GET" },
+    customerLookupHeaders: { type: Map, of: String, default: {} },
+    customerLookupCacheMinutes: { type: Number, default: 30 },
+    customerFoundPath: { type: String, default: "found" },
+    customerDataPath: { type: String, default: "customer" }
   },
   { timestamps: true }
 );

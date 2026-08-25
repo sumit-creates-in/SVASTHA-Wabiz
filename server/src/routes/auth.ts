@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { User, WabaNumber } from "../models";
 import { env } from "../config/env";
 import { syncNumberHealth } from "../services/whatsapp";
+import { effectivePermissions, ROLE_PRESETS } from "../permissions";
 
 export const authRouter = Router();
 
@@ -14,10 +15,24 @@ authRouter.post("/login", async (req, res) => {
     res.status(401).json({ error: "Invalid email or password" });
     return;
   }
+
+  user.lastLoginAt = new Date();
+  await user.save();
+
   const token = jwt.sign({ sub: String(user._id), role: user.role }, env.jwtSecret, {
     expiresIn: "30d"
   });
-  res.json({ token, user: { id: user._id, email: user.email, name: user.name, role: user.role } });
+  res.json({
+    token,
+    user: {
+      id: user._id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      maskPhoneNumbers: !!user.maskPhoneNumbers,
+      permissions: effectivePermissions(user)
+    }
+  });
 });
 
 /**
@@ -67,7 +82,8 @@ authRouter.post("/register", async (req, res) => {
     email: normalised,
     passwordHash,
     name: name || "User",
-    role: isBootstrap ? "admin" : "agent"
+    role: isBootstrap ? "admin" : "agent",
+    permissions: isBootstrap ? ROLE_PRESETS.admin : ROLE_PRESETS.agent
   });
 
   const token = jwt.sign({ sub: String(user._id), role: user.role }, env.jwtSecret, {
@@ -76,12 +92,45 @@ authRouter.post("/register", async (req, res) => {
   res.json({ token, user: { id: user._id, email: user.email, name: user.name, role: user.role } });
 });
 
+/** Who am I, and what am I allowed to do? Drives the UI. */
+authRouter.get("/me", async (req, res) => {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  try {
+    const payload = jwt.verify(token, env.jwtSecret) as { sub: string };
+    const user = await User.findById(payload.sub)
+      .select("name email role active permissions allowedNumbers maskPhoneNumbers")
+      .lean();
+    if (!user || !user.active) {
+      res.status(401).json({ error: "Account is inactive" });
+      return;
+    }
+    res.json({
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      maskPhoneNumbers: !!user.maskPhoneNumbers,
+      allowedNumbers: (user.allowedNumbers || []).map(String),
+      permissions: effectivePermissions(user as any)
+    });
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+  }
+});
+
 /** Create the first admin user if none exists. */
 export async function ensureAdmin(): Promise<void> {
   const count = await User.countDocuments();
   if (count === 0) {
     const passwordHash = await bcrypt.hash(env.adminPassword, 10);
-    await User.create({ email: env.adminEmail, passwordHash, name: "Admin", role: "admin" });
+    await User.create({
+      email: env.adminEmail,
+      passwordHash,
+      name: "Admin",
+      role: "admin",
+      permissions: ROLE_PRESETS.admin
+    });
     console.log(`[auth] created admin user ${env.adminEmail}`);
   }
 }

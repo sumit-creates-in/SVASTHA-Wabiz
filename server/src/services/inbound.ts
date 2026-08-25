@@ -1,6 +1,9 @@
 import { Contact, Conversation, Message, WabaNumber, IWabaNumber, getSettings } from "../models";
 import * as wa from "./whatsapp";
-import { generateReply } from "./ai";
+import { decide } from "./ai";
+import { AiAction } from "../models";
+import { runAction } from "./actions";
+import { syncCustomer } from "./customer";
 import { emit } from "../realtime";
 import {
   canSendFreeform,
@@ -204,6 +207,14 @@ export async function handleInboundMessage(
     return;
   }
 
+  // ── 5b. Who is this? Lead or existing customer ────────
+  // The answer changes how the AI behaves and which actions it can use.
+  try {
+    await syncCustomer(contact);
+  } catch {
+    /* never block a reply on the lookup */
+  }
+
   // ── 6. Off-hours notice (once, alongside the AI reply) ─
   if (!withinBusinessHours(settings.businessHours) && settings.outsideHoursMessage) {
     const dup = await isDuplicateOfLast(conversation._id, settings.outsideHoursMessage);
@@ -223,8 +234,95 @@ export async function handleInboundMessage(
     }
   }
 
-  // ── 7. Generate, review, then send ────────────────────
-  const draft = await generateReply(conversation._id as any, number);
+  // ── 7. Decide: reply in words, or perform an action ───
+  const decision = await decide(conversation._id as any, number, contact);
+  if (decision.kind === "none") return;
+
+  // ── 7a. The AI wants to do something (book a call, raise a ticket) ──
+  if (decision.kind === "action" && decision.actionName) {
+    const action = await AiAction.findOne({ name: decision.actionName, enabled: true });
+    if (!action) {
+      console.warn(`[actions] model asked for unknown action "${decision.actionName}"`);
+      return;
+    }
+
+    const result = await runAction(action, decision.args || {}, { contact, conversation, number });
+
+    if (!result.ok) {
+      // Never tell the customer it worked when it didn't — hand to a human.
+      conversation.aiEnabled = false;
+      conversation.status = "pending";
+      conversation.labels = Array.from(new Set([...conversation.labels, "needs-human", "action-failed"]));
+      await conversation.save();
+      await Message.create({
+        conversation: conversation._id,
+        contact: contact._id,
+        number: number._id,
+        direction: "out",
+        author: "system",
+        type: "text",
+        text: `Action "${action.displayName}" failed: ${result.error}. Customer was NOT told it succeeded — please follow up.`,
+        status: "sent"
+      });
+      const holding = settings.escalationMessage;
+      if (holding) {
+        const r = await wa.sendText(number, waId, holding);
+        await Message.create({
+          conversation: conversation._id,
+          contact: contact._id,
+          number: number._id,
+          direction: "out",
+          author: "system",
+          type: "text",
+          text: holding,
+          waMessageId: r.waMessageId,
+          status: r.error ? "failed" : "sent"
+        });
+      }
+      emit("conversation:update", conversation.toObject());
+      return;
+    }
+
+    const confirmation = result.confirmation || "All done — our team will be in touch shortly.";
+    const sendRes = await wa.sendText(number, waId, confirmation);
+    const confMsg = await Message.create({
+      conversation: conversation._id,
+      contact: contact._id,
+      number: number._id,
+      direction: "out",
+      author: "ai",
+      type: "text",
+      text: confirmation,
+      waMessageId: sendRes.waMessageId,
+      status: sendRes.error ? "failed" : "sent",
+      error: sendRes.error
+    });
+    if (!sendRes.error) await recordNumberSend(number);
+
+    await Message.create({
+      conversation: conversation._id,
+      contact: contact._id,
+      number: number._id,
+      direction: "out",
+      author: "system",
+      type: "text",
+      text:
+        `Action "${action.displayName}" completed` +
+        (result.ticketReference ? ` — ticket ${result.ticketReference}` : "") +
+        `. Sent to ${action.webhookUrl.replace(/^https?:\/\//, "").split("/")[0]}.`,
+      status: "sent"
+    });
+
+    conversation.lastMessageAt = new Date();
+    conversation.lastMessagePreview = confirmation.slice(0, 120);
+    await conversation.save();
+    emit("message:new", { message: confMsg.toObject(), conversation: conversation.toObject() });
+    emit("conversation:update", conversation.toObject());
+    return;
+  }
+
+  // ── 7b. Ordinary text reply ───────────────────────────
+  const draft = decision.text || "";
   if (!draft) return;
 
   const review = reviewReply(draft, text, settings, number.qualityRating);

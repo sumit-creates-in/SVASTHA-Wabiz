@@ -15,6 +15,7 @@ import { startWorkflowScheduler } from "./services/workflows";
 import { startHealthSync } from "./services/whatsapp";
 import { runMigrations } from "./models";
 import { seedNumberFromEnv } from "./routes/auth";
+import { seedExampleActions } from "./seed";
 
 async function main() {
   const app = express();
@@ -51,6 +52,7 @@ async function main() {
   await runMigrations();
   await ensureAdmin();
   await seedNumberFromEnv();
+  await seedExampleActions();
   startScheduler();
   startWorkflowScheduler();
   startHealthSync();

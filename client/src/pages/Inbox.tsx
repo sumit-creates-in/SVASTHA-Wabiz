@@ -316,7 +316,13 @@ export default function Inbox() {
               <div>
                 <div className="font-semibold text-sm">{active.contact?.name || active.contact?.waId}</div>
                 <div className="text-xs text-slate-500">
-                  +{active.contact?.waId} · via {active.number?.label}
+                  {active.contact?.masked ? active.contact.waId : `+${active.contact?.waId}`} · via{" "}
+                  {active.number?.label}
+                  {active.contact?.isCustomer && (
+                    <span className="ml-2 bg-emerald-100 text-emerald-700 rounded px-1.5 py-0.5 text-[10px] font-medium">
+                      Customer
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -453,7 +459,11 @@ export default function Inbox() {
               <section>
                 <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Customer</h4>
                 <dl className="text-xs space-y-1.5">
-                  <Row label="Phone" value={`+${active.contact?.waId}`} />
+                  <Row
+                    label="Phone"
+                    value={active.contact?.masked ? active.contact.waId : `+${active.contact?.waId}`}
+                  />
+                  <Row label="Type" value={active.contact?.isCustomer ? "Existing customer" : "Lead"} />
                   <Row label="Email" value={active.contact?.email || "Not set"} />
                   <Row label="Last seen" value={active.contact?.lastSeenAt ? new Date(active.contact.lastSeenAt).toLocaleString() : "—"} />
                   <Row label="Number" value={`${active.number?.label} (${active.number?.displayPhoneNumber})`} />

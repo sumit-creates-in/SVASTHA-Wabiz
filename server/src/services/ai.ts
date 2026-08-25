@@ -1,7 +1,9 @@
 import axios from "axios";
 import { env } from "../config/env";
-import { getSettings, IWabaNumber, KnowledgeDoc, Message } from "../models";
+import { getSettings, IContact, IWabaNumber, KnowledgeDoc, Message } from "../models";
 import { ESCALATE_TOKEN, POLICY_PROMPT, sanitizeReply } from "./compliance";
+import { actionsFor, toToolSchema, toOpenAiTool } from "./actions";
+import { customerContextBlock } from "./customer";
 import { Types } from "mongoose";
 
 interface ChatTurn {
@@ -9,8 +11,18 @@ interface ChatTurn {
   content: string;
 }
 
-/** Business prompt + per-number override + knowledge base + policy rules. */
-async function buildSystemPrompt(number?: IWabaNumber | null): Promise<string> {
+/** What the model decided to do with this turn. */
+export interface AiDecision {
+  kind: "text" | "action" | "none";
+  text?: string;
+  actionName?: string;
+  args?: Record<string, unknown>;
+}
+
+async function buildSystemPrompt(
+  number?: IWabaNumber | null,
+  contact?: IContact | null
+): Promise<string> {
   const settings = await getSettings();
   const docs = await KnowledgeDoc.find({ enabled: true }).lean();
   let prompt = number?.systemPromptOverride?.trim() || settings.systemPrompt;
@@ -18,11 +30,12 @@ async function buildSystemPrompt(number?: IWabaNumber | null): Promise<string> {
   if (number) {
     prompt += `\n\nYou are answering on the business WhatsApp number "${number.verifiedName || number.label}" (${number.displayPhoneNumber}).`;
     if (number.purpose === "otp")
-      prompt +=
-        " This number is used for transactional/OTP messages only — never send marketing content here.";
+      prompt += " This number is used for transactional/OTP messages only — never send marketing content here.";
     if (number.purpose === "support")
       prompt += " This number is a customer support line — be practical and solution-focused.";
   }
+
+  if (contact) prompt += customerContextBlock(contact);
 
   if (docs.length) {
     prompt +=
@@ -34,7 +47,7 @@ async function buildSystemPrompt(number?: IWabaNumber | null): Promise<string> {
 
   if (settings.escalateWhenUnsure) {
     prompt += `\n\n## When you are not sure
-If the answer is not in the business knowledge base above, or the customer is asking about their specific order, payment, medical situation, or anything you cannot verify, do NOT guess and do NOT give a generic non-answer. Reply with exactly this marker and nothing else:
+If the answer is not in the business knowledge base above, and no action covers the request, do NOT guess and do NOT give a generic non-answer. Reply with exactly this marker and nothing else:
 ${ESCALATE_TOKEN}
 A human will take over. Guessing damages trust and gets the number reported — escalating costs nothing.`;
   }
@@ -48,10 +61,7 @@ A human will take over. Guessing damages trust and gets the number reported — 
 }
 
 async function buildHistory(conversationId: Types.ObjectId, limit = 20): Promise<ChatTurn[]> {
-  const msgs = await Message.find({
-    conversation: conversationId,
-    author: { $ne: "system" }
-  })
+  const msgs = await Message.find({ conversation: conversationId, author: { $ne: "system" } })
     .sort({ createdAt: -1 })
     .limit(limit)
     .lean();
@@ -68,10 +78,24 @@ async function buildHistory(conversationId: Types.ObjectId, limit = 20): Promise
   return turns;
 }
 
-async function callClaude(system: string, turns: ChatTurn[], model: string, maxTokens: number): Promise<string> {
+// ── Provider calls ──────────────────────────────────────
+
+async function callClaude(
+  system: string,
+  turns: ChatTurn[],
+  model: string,
+  maxTokens: number,
+  tools?: unknown[]
+): Promise<AiDecision> {
   const { data } = await axios.post(
     "https://api.anthropic.com/v1/messages",
-    { model, max_tokens: maxTokens, system, messages: turns },
+    {
+      model,
+      max_tokens: maxTokens,
+      system,
+      messages: turns,
+      ...(tools && tools.length ? { tools } : {})
+    },
     {
       headers: {
         "x-api-key": env.ai.anthropicKey,
@@ -81,51 +105,115 @@ async function callClaude(system: string, turns: ChatTurn[], model: string, maxT
       timeout: 60000
     }
   );
-  return data?.content?.[0]?.text || "";
+
+  const blocks: any[] = data?.content || [];
+  const toolUse = blocks.find((b) => b.type === "tool_use");
+  if (toolUse) {
+    return { kind: "action", actionName: toolUse.name, args: toolUse.input || {} };
+  }
+  const text = blocks
+    .filter((b) => b.type === "text")
+    .map((b) => b.text)
+    .join("\n")
+    .trim();
+  return text ? { kind: "text", text } : { kind: "none" };
 }
 
-async function callOpenAI(system: string, turns: ChatTurn[], model: string, maxTokens: number): Promise<string> {
+async function callOpenAI(
+  system: string,
+  turns: ChatTurn[],
+  model: string,
+  maxTokens: number,
+  tools?: unknown[]
+): Promise<AiDecision> {
   const { data } = await axios.post(
     "https://api.openai.com/v1/chat/completions",
     {
       model,
       max_completion_tokens: maxTokens,
-      messages: [{ role: "system", content: system }, ...turns]
+      messages: [{ role: "system", content: system }, ...turns],
+      ...(tools && tools.length ? { tools, tool_choice: "auto" } : {})
     },
     { headers: { Authorization: `Bearer ${env.ai.openaiKey}` }, timeout: 60000 }
   );
-  return data?.choices?.[0]?.message?.content || "";
+
+  const msg = data?.choices?.[0]?.message;
+  const call = msg?.tool_calls?.[0];
+  if (call?.function?.name) {
+    let args: Record<string, unknown> = {};
+    try {
+      args = JSON.parse(call.function.arguments || "{}");
+    } catch {
+      /* malformed arguments — treated as missing below */
+    }
+    return { kind: "action", actionName: call.function.name, args };
+  }
+  const text = (msg?.content || "").trim();
+  return text ? { kind: "text", text } : { kind: "none" };
 }
 
-/** Generate a policy-safe AI reply. Returns empty string if it can't. */
-export async function generateReply(
+/**
+ * Decide what to do with this turn: reply in text, or call one of the
+ * configured actions (book a call, raise a ticket, etc.).
+ */
+export async function decide(
   conversationId: Types.ObjectId,
-  number?: IWabaNumber | null
-): Promise<string> {
+  number?: IWabaNumber | null,
+  contact?: IContact | null
+): Promise<AiDecision> {
   try {
     const settings = await getSettings();
-    const system = await buildSystemPrompt(number);
+    const system = await buildSystemPrompt(number, contact);
     const turns = await buildHistory(conversationId);
-    if (!turns.length) return "";
+    if (!turns.length) return { kind: "none" };
 
-    let raw: string;
+    const actions = number && contact ? await actionsFor(number, contact) : [];
+
     if (settings.aiProvider === "openai") {
       if (!env.ai.openaiKey) throw new Error("OPENAI_API_KEY not set");
       const model = settings.aiModel.startsWith("gpt") ? settings.aiModel : "gpt-4o-mini";
-      raw = await callOpenAI(system, turns, model, settings.aiMaxTokens);
-    } else {
-      if (!env.ai.anthropicKey) throw new Error("ANTHROPIC_API_KEY not set");
-      const model = settings.aiModel.startsWith("claude") ? settings.aiModel : "claude-sonnet-5";
-      raw = await callClaude(system, turns, model, settings.aiMaxTokens);
+      const decision = await callOpenAI(
+        system,
+        turns,
+        model,
+        settings.aiMaxTokens,
+        actions.map(toOpenAiTool)
+      );
+      if (decision.kind === "text") decision.text = sanitizeReply(decision.text!, settings);
+      return decision;
     }
-    return sanitizeReply(raw, settings);
+
+    if (!env.ai.anthropicKey) throw new Error("ANTHROPIC_API_KEY not set");
+    const model = settings.aiModel.startsWith("claude") ? settings.aiModel : "claude-sonnet-5";
+    const decision = await callClaude(
+      system,
+      turns,
+      model,
+      settings.aiMaxTokens,
+      actions.map(toToolSchema)
+    );
+    if (decision.kind === "text") decision.text = sanitizeReply(decision.text!, settings);
+    return decision;
   } catch (err: any) {
-    console.error("[ai] generateReply failed:", err?.response?.data?.error?.message || err.message);
-    return "";
+    console.error("[ai] decide failed:", err?.response?.data?.error?.message || err.message);
+    return { kind: "none" };
   }
 }
 
-/** Classify a conversation for lead management (intent + urgency + suggested labels). */
+/** Text-only reply, used by the "AI draft" button in the inbox. */
+export async function generateReply(
+  conversationId: Types.ObjectId,
+  number?: IWabaNumber | null,
+  contact?: IContact | null
+): Promise<string> {
+  const decision = await decide(conversationId, number, contact);
+  if (decision.kind === "text") return decision.text || "";
+  if (decision.kind === "action")
+    return `[The AI would run the "${decision.actionName}" action here with: ${JSON.stringify(decision.args)}]`;
+  return "";
+}
+
+/** Classify a conversation for lead management. */
 export async function classifyConversation(conversationId: Types.ObjectId): Promise<{
   intent: string;
   urgency: "low" | "medium" | "high";
@@ -140,12 +228,12 @@ export async function classifyConversation(conversationId: Types.ObjectId): Prom
     const system =
       'You classify WhatsApp customer conversations. Reply with ONLY compact JSON: {"intent":"new_lead|question|complaint|booking|payment|support|spam|other","urgency":"low|medium|high","labels":["short-tag"],"summary":"one sentence"}. No prose, no code fences.';
     const turnsForModel: ChatTurn[] = [{ role: "user", content: transcript }];
-    const raw =
+    const decision =
       settings.aiProvider === "openai" && env.ai.openaiKey
         ? await callOpenAI(system, turnsForModel, "gpt-4o-mini", 300)
         : await callClaude(system, turnsForModel, "claude-haiku-4-5-20251001", 300);
-    const json = raw.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(json);
+    const raw = decision.text || "";
+    const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
     return {
       intent: String(parsed.intent || "other"),
       urgency: ["low", "medium", "high"].includes(parsed.urgency) ? parsed.urgency : "low",
