@@ -359,10 +359,11 @@ function WorkflowForm({
               <option value="">Select number…</option>
               {numbers.map((n) => (
                 <option key={n._id} value={n._id}>
-                  {n.label} · {n.displayPhoneNumber}
+                  {n.label} · {n.displayPhoneNumber} [{n.purpose}]
                 </option>
               ))}
             </select>
+            <p className="text-xs text-slate-400 mt-1">Any number can send AUTHENTICATION / OTP templates regardless of purpose.</p>
           </div>
         </div>
 
