@@ -470,6 +470,9 @@ export interface ISettings extends Document {
 }
 const settingsSchema = new Schema<ISettings>(
   {
+    // Accept any _id type so legacy docs with a string _id (e.g. "bot") don't
+    // cause a cast validation error when Mongoose tries to hydrate them.
+    _id: { type: Schema.Types.Mixed },
     businessName: { type: String, default: "SVASTHA" },
     aiProvider: { type: String, enum: ["claude", "openai"], default: "claude" },
     aiModel: { type: String, default: "claude-sonnet-5" },
@@ -518,8 +521,15 @@ const settingsSchema = new Schema<ISettings>(
 export const Settings = model<ISettings>("Settings", settingsSchema);
 
 export async function getSettings(): Promise<ISettings> {
-  let s = await Settings.findOne();
-  if (!s) s = await Settings.create({});
+  // Prefer a document whose _id is a proper ObjectId; skip legacy string-id
+  // docs (e.g. _id: "bot") that were inserted by older app versions.
+  let s = await Settings.findOne({ _id: { $type: "objectId" } });
+  if (!s) {
+    // Fallback: try any document so existing string-id settings aren't lost
+    s = await Settings.findOne({ _id: { $not: { $type: "objectId" } } });
+    if (s) return s; // tolerate it if it's the only one
+    s = await Settings.create({});
+  }
   return s;
 }
 
