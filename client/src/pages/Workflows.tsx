@@ -475,9 +475,24 @@ function WorkflowDetail({
   onChanged: () => void;
 }) {
   const [events, setEvents] = useState<WorkflowEvent[]>([]);
-  const [testPayload, setTestPayload] = useState(
-    JSON.stringify({ phone: "919999999999", name: "Test User" }, null, 2)
-  );
+
+  // Build initial test payload from actual workflow fields
+  function buildInitialPayload(): string {
+    const obj: Record<string, string> = {};
+    if (workflow.phoneField) obj[workflow.phoneField] = "919999999999";
+    if (workflow.nameField) obj[workflow.nameField] = "Test User";
+    // add a placeholder for each body variable like {{otp_code}}
+    (workflow.bodyParams || []).forEach((p) => {
+      const matches = p.match(/\{\{\s*([\w.]+)\s*\}\}/g) || [];
+      matches.forEach((m) => {
+        const key = m.replace(/\{\{\s*|\s*\}\}/g, "");
+        if (key && !(key in obj)) obj[key] = `<${key}>`;
+      });
+    });
+    return JSON.stringify(obj, null, 2);
+  }
+
+  const [testPayload, setTestPayload] = useState(() => buildInitialPayload());
   const [testResult, setTestResult] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const url = `${window.location.origin}/api/hooks/${workflow.key}`;
@@ -509,10 +524,20 @@ function WorkflowDetail({
     }
   }
 
+  const curlPayload: Record<string, string> = {};
+  if (workflow.phoneField) curlPayload[workflow.phoneField] = "919876543210";
+  if (workflow.nameField) curlPayload[workflow.nameField] = "Asha";
+  (workflow.bodyParams || []).forEach((p) => {
+    const matches = p.match(/\{\{\s*([\w.]+)\s*\}\}/g) || [];
+    matches.forEach((m) => {
+      const key = m.replace(/\{\{\s*|\s*\}\}/g, "");
+      if (key && !(key in curlPayload)) curlPayload[key] = `<${key}>`;
+    });
+  });
   const curl = `curl -X POST '${url}' \\
   -H 'Content-Type: application/json' \\
   -H 'x-svastha-secret: ${workflow.secret}' \\
-  -d '{"${workflow.phoneField}":"919876543210","${workflow.nameField}":"Asha"}'`;
+  -d '${JSON.stringify(curlPayload)}'`;
 
   return (
     <Modal title={workflow.name} onClose={onClose} wide>
