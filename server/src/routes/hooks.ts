@@ -14,10 +14,7 @@ hooksRouter.all("/:key", async (req, res) => {
     res.status(404).json({ error: "Unknown workflow" });
     return;
   }
-  const provided =
-    (req.headers["x-svastha-secret"] as string) ||
-    (req.query.secret as string) ||
-    "";
+  const provided = (req.headers["x-svastha-secret"] as string) || (req.query.secret as string) || "";
   if (provided !== workflow.secret) {
     res.status(401).json({ error: "Invalid secret" });
     return;

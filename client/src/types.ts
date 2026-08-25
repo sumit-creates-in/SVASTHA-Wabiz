@@ -16,9 +16,24 @@ export interface WabaNumber {
   throughputLevel: string;
   lastSyncAt?: string;
   lastSyncError?: string;
+  lastWebhookAt?: string;
   sentToday: number;
   conversations?: number;
   unread?: number;
+}
+
+export interface SubscribedApp {
+  id: string;
+  name: string;
+  link?: string;
+}
+
+export interface SubscriptionStatus {
+  appId: string | null;
+  apps: SubscribedApp[];
+  otherApps: SubscribedApp[];
+  subscribed: boolean;
+  error?: string;
 }
 
 export interface DiscoveredNumber {
@@ -52,10 +67,7 @@ export interface Agent {
 export interface Conversation {
   _id: string;
   contact: Contact;
-  number: Pick<
-    WabaNumber,
-    "_id" | "label" | "displayPhoneNumber" | "verifiedName" | "qualityRating"
-  >;
+  number: Pick<WabaNumber, "_id" | "label" | "displayPhoneNumber" | "verifiedName" | "qualityRating">;
   status: "open" | "pending" | "closed";
   aiEnabled: boolean;
   botPaused: boolean;
@@ -102,14 +114,7 @@ export interface Broadcast {
   audienceTags: string[];
   scheduledAt?: string;
   status: string;
-  stats: {
-    total: number;
-    sent: number;
-    delivered: number;
-    read: number;
-    failed: number;
-    skipped: number;
-  };
+  stats: { total: number; sent: number; delivered: number; read: number; failed: number; skipped: number };
   createdAt: string;
 }
 
@@ -172,17 +177,38 @@ export interface Settings {
   optOutKeywords: string[];
   optOutReply: string;
   outsideHoursMessage: string;
-  businessHours: {
-    start: string;
-    end: string;
-    timezone: string;
-    enabled: boolean;
-  };
+  businessHours: { start: string; end: string; timezone: string; enabled: boolean };
   maxAiRepliesPerHour: number;
   maxReplyChars: number;
   maxMarketingPerContactPerDay: number;
   pauseAiAfterHumanReplyMinutes: number;
   blockSendOnRedQuality: boolean;
+  escalateWhenUnsure: boolean;
+  frustrationAutoHandoff: boolean;
+  blockPromoWhenNotAsked: boolean;
+  maxLinksPerReply: number;
+  conservativeOnYellowQuality: boolean;
+  autoPauseMarketingOnDegrade: boolean;
+  escalationMessage: string;
+}
+
+export interface Alert {
+  _id: string;
+  level: "info" | "warning" | "critical";
+  title: string;
+  detail: string;
+  acknowledged: boolean;
+  createdAt: string;
+  number?: { label: string; displayPhoneNumber: string };
+}
+
+export interface QualitySnapshot {
+  _id: string;
+  qualityRating: string;
+  messagingLimit: string;
+  status: string;
+  changed: boolean;
+  createdAt: string;
 }
 
 export interface AnalyticsOverview {
@@ -196,4 +222,8 @@ export interface AnalyticsOverview {
   needsHuman: number;
   numbers: WabaNumber[];
   byDay: { _id: { day: string; direction: "in" | "out" }; count: number }[];
+  errors: { code?: number; message: string; count: number }[];
+  alerts: number;
+  escalations: number;
+  atRisk: number;
 }

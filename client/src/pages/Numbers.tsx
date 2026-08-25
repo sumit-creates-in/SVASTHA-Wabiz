@@ -9,10 +9,13 @@ import {
   CheckCircle2,
   Trash2,
   Bot,
-  Search
+  Search,
+  Radio,
+  AlertTriangle,
+  Link2
 } from "lucide-react";
 import { api } from "../lib/api";
-import type { WabaNumber, DiscoveredNumber } from "../types";
+import type { WabaNumber, DiscoveredNumber, SubscriptionStatus, QualitySnapshot } from "../types";
 
 const qualityDot: Record<string, string> = {
   GREEN: "bg-emerald-500",
@@ -35,6 +38,8 @@ function fmtDate(iso?: string) {
 
 export default function Numbers() {
   const [numbers, setNumbers] = useState<WabaNumber[]>([]);
+  const [subs, setSubs] = useState<Record<string, SubscriptionStatus>>({});
+  const [subBusy, setSubBusy] = useState("");
   const [filter, setFilter] = useState<"all" | "active" | "disconnected">("all");
   const [search, setSearch] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -47,15 +52,39 @@ export default function Numbers() {
     setNumbers(await api<WabaNumber[]>("/numbers"));
   }, []);
 
+  const loadSubs = useCallback(async () => {
+    try {
+      setSubs(await api<Record<string, SubscriptionStatus>>("/numbers/subscription-status"));
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
+
   useEffect(() => {
     load();
-  }, [load]);
+    loadSubs();
+  }, [load, loadSubs]);
+
+  async function subscribe(n: WabaNumber) {
+    setSubBusy(n._id);
+    setMsg("");
+    try {
+      await api(`/numbers/${n._id}/subscribe`, { method: "POST" });
+      await loadSubs();
+      setMsg(`Subscribed to ${n.displayPhoneNumber || n.label}. Webhooks should start arriving immediately.`);
+    } catch (e: any) {
+      setMsg(`Subscribe failed: ${e.message}`);
+    } finally {
+      setSubBusy("");
+    }
+  }
 
   async function syncAll() {
     setSyncing(true);
     try {
       await api("/numbers/sync-all", { method: "POST" });
       await load();
+      await loadSubs();
       setMsg("Health refreshed from Meta.");
     } catch (e: any) {
       setMsg(e.message);
@@ -188,6 +217,7 @@ export default function Numbers() {
                         <th className="px-3 py-2 font-medium">Status</th>
                         <th className="px-3 py-2 font-medium">Quality</th>
                         <th className="px-3 py-2 font-medium">Messaging Limit</th>
+                        <th className="px-3 py-2 font-medium">Webhook</th>
                         <th className="px-3 py-2 font-medium">Chats</th>
                         <th className="px-3 py-2 font-medium">Last Sync</th>
                         <th className="px-3 py-2 font-medium">Name Status</th>
@@ -224,8 +254,43 @@ export default function Numbers() {
                             </div>
                           </td>
                           <td className="px-3 py-4">
-                            <div>{n.messagingLimit.replace("TIER_", "TIER_")}</div>
+                            <div>{n.messagingLimit}</div>
                             <div className="text-xs text-slate-400">{n.phoneNumberId}</div>
+                          </td>
+                          <td className="px-3 py-4">
+                            {subs[n._id]?.subscribed ? (
+                              <>
+                                <span className="inline-flex items-center gap-1.5 text-emerald-600 font-medium">
+                                  <Radio size={13} /> Subscribed
+                                </span>
+                                <div className="text-xs text-slate-400 mt-0.5">
+                                  {n.lastWebhookAt ? `Last event ${fmtDate(n.lastWebhookAt)}` : "No events yet"}
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <span className="inline-flex items-center gap-1.5 text-red-600 font-medium">
+                                  <AlertTriangle size={13} /> Not subscribed
+                                </span>
+                                <button
+                                  className="btn-primary text-[11px] py-1 px-2 mt-1"
+                                  disabled={subBusy === n._id}
+                                  onClick={() => subscribe(n)}
+                                >
+                                  {subBusy === n._id ? "Subscribing…" : "Subscribe now"}
+                                </button>
+                              </>
+                            )}
+                            {!!subs[n._id]?.otherApps?.length && (
+                              <div
+                                className="text-xs text-amber-600 mt-1 flex items-center gap-1"
+                                title={subs[n._id].otherApps.map((a) => a.name).join(", ")}
+                              >
+                                <Link2 size={11} />
+                                {subs[n._id].otherApps.length} other app
+                                {subs[n._id].otherApps.length > 1 ? "s" : ""}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-4">
                             {n.conversations ?? 0}
@@ -287,6 +352,8 @@ export default function Numbers() {
       {manage && (
         <ManageNumberModal
           number={manage}
+          sub={subs[manage._id]}
+          onSubscribe={() => subscribe(manage)}
           onClose={() => setManage(null)}
           onSaved={() => {
             setManage(null);
@@ -416,10 +483,14 @@ function AddNumberModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
 
 function ManageNumberModal({
   number,
+  sub,
+  onSubscribe,
   onClose,
   onSaved
 }: {
   number: WabaNumber;
+  sub?: SubscriptionStatus;
+  onSubscribe: () => void;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -430,6 +501,13 @@ function ManageNumberModal({
     systemPromptOverride: number.systemPromptOverride || ""
   });
   const [busy, setBusy] = useState(false);
+  const [history, setHistory] = useState<QualitySnapshot[]>([]);
+
+  useEffect(() => {
+    api<QualitySnapshot[]>(`/numbers/${number._id}/quality-history`)
+      .then((h) => setHistory(h.filter((x) => x.changed).slice(-8).reverse()))
+      .catch(() => {});
+  }, [number._id]);
 
   async function save() {
     setBusy(true);
@@ -462,6 +540,78 @@ function ManageNumberModal({
             <div className="font-semibold">{number.throughputLevel || "—"}</div>
           </div>
         </div>
+
+        {/* Webhook delivery diagnostics */}
+        <div className="border border-slate-200 rounded-lg p-4">
+          <h3 className="font-semibold text-sm mb-2">Webhook delivery</h3>
+          {sub?.error ? (
+            <p className="text-xs text-red-600">Couldn't read subscriptions: {sub.error}</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <span className={`text-sm font-medium ${sub?.subscribed ? "text-emerald-600" : "text-red-600"}`}>
+                  {sub?.subscribed
+                    ? "This app is subscribed to the Business Account"
+                    : "This app is NOT subscribed — no webhooks will arrive"}
+                </span>
+                {!sub?.subscribed && (
+                  <button className="btn-primary text-xs shrink-0" onClick={onSubscribe}>
+                    Subscribe
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 mb-2">
+                Last event received: {number.lastWebhookAt ? fmtDate(number.lastWebhookAt) : "never"}
+              </p>
+              {!!sub?.apps?.length && (
+                <div>
+                  <div className="text-xs text-slate-500 mb-1">Apps receiving this account's webhooks:</div>
+                  <ul className="text-xs space-y-1">
+                    {sub.apps.map((a) => (
+                      <li key={a.id} className="flex items-center gap-2">
+                        <span className={a.id === sub.appId ? "font-semibold text-emerald-700" : "text-slate-600"}>
+                          {a.name}
+                        </span>
+                        <span className="text-slate-400">{a.id}</span>
+                        {a.id === sub.appId && <span className="text-emerald-600">← this app</span>}
+                      </li>
+                    ))}
+                  </ul>
+                  {!!sub.otherApps.length && (
+                    <p className="text-xs text-amber-600 mt-2">
+                      Other apps are also subscribed and will receive the same messages. Remove them in Business
+                      Settings → WhatsApp Accounts → Apps to avoid duplicate replies.
+                    </p>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {history.length > 0 && (
+          <div className="border border-slate-200 rounded-lg p-4">
+            <h3 className="font-semibold text-sm mb-2">Quality history</h3>
+            <ul className="text-xs space-y-1.5">
+              {history.map((h) => (
+                <li key={h._id} className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full ${qualityDot[h.qualityRating] || qualityDot.UNKNOWN}`} />
+                    {qualityLabel[h.qualityRating] || h.qualityRating} · {h.messagingLimit}
+                  </span>
+                  <span className="text-slate-400">{fmtDate(h.createdAt)}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-slate-500 mt-2">
+              A drop here almost always traces back to a broadcast in the preceding 24-48 hours.
+            </p>
+          </div>
+        )}
+
+        {number.lastSyncError && (
+          <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-3">{number.lastSyncError}</p>
+        )}
 
         <div>
           <label className="label">Label</label>

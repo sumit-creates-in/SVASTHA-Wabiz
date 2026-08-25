@@ -52,7 +52,8 @@ function Shell({ children }: { children: React.ReactNode }) {
               to={to}
               end={to === "/"}
               className={({ isActive }) =>
-                `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${isActive ? "bg-brand-600 text-white" : "text-brand-100/80 hover:bg-white/10"
+                `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                  isActive ? "bg-brand-600 text-white" : "text-brand-100/80 hover:bg-white/10"
                 }`
               }
             >

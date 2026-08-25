@@ -14,9 +14,9 @@ const userSchema = new Schema<IUser>(
     passwordHash: { type: String, required: true },
     name: { type: String, default: "Admin" },
     role: { type: String, enum: ["admin", "agent"], default: "admin" },
-    active: { type: Boolean, default: true },
+    active: { type: Boolean, default: true }
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 export const User = model<IUser>("User", userSchema);
 
@@ -41,6 +41,8 @@ export interface IWabaNumber extends Document {
   throughputLevel: string;
   lastSyncAt?: Date;
   lastSyncError?: string;
+  /** Last time Meta actually delivered a webhook for this number. */
+  lastWebhookAt?: Date;
   // rolling counters used for quality safeguards
   sentToday: number;
   sentTodayDate: string; // YYYY-MM-DD
@@ -53,11 +55,7 @@ const wabaNumberSchema = new Schema<IWabaNumber>(
     displayPhoneNumber: { type: String, default: "" },
     verifiedName: { type: String, default: "" },
     tokenOverride: String,
-    purpose: {
-      type: String,
-      enum: ["marketing", "support", "otp", "mixed"],
-      default: "mixed",
-    },
+    purpose: { type: String, enum: ["marketing", "support", "otp", "mixed"], default: "mixed" },
     enabled: { type: Boolean, default: true },
     aiEnabled: { type: Boolean, default: true },
     systemPromptOverride: String,
@@ -69,10 +67,11 @@ const wabaNumberSchema = new Schema<IWabaNumber>(
     throughputLevel: { type: String, default: "" },
     lastSyncAt: Date,
     lastSyncError: String,
+    lastWebhookAt: Date,
     sentToday: { type: Number, default: 0 },
-    sentTodayDate: { type: String, default: "" },
+    sentTodayDate: { type: String, default: "" }
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 export const WabaNumber = model<IWabaNumber>("WabaNumber", wabaNumberSchema);
 
@@ -102,9 +101,9 @@ const contactSchema = new Schema<IContact>(
     optInSource: String,
     lastSeenAt: Date,
     marketingSentToday: { type: Number, default: 0 },
-    marketingSentDate: { type: String, default: "" },
+    marketingSentDate: { type: String, default: "" }
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 export const Contact = model<IContact>("Contact", contactSchema);
 
@@ -128,23 +127,9 @@ export interface IConversation extends Document {
 }
 const conversationSchema = new Schema<IConversation>(
   {
-    contact: {
-      type: Schema.Types.ObjectId,
-      ref: "Contact",
-      required: true,
-      index: true,
-    },
-    number: {
-      type: Schema.Types.ObjectId,
-      ref: "WabaNumber",
-      required: true,
-      index: true,
-    },
-    status: {
-      type: String,
-      enum: ["open", "pending", "closed"],
-      default: "open",
-    },
+    contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true, index: true },
+    number: { type: Schema.Types.ObjectId, ref: "WabaNumber", required: true, index: true },
+    status: { type: String, enum: ["open", "pending", "closed"], default: "open" },
     aiEnabled: { type: Boolean, default: true },
     botPaused: { type: Boolean, default: false },
     aiPausedUntil: Date,
@@ -156,15 +141,12 @@ const conversationSchema = new Schema<IConversation>(
     lastMessagePreview: { type: String, default: "" },
     assignedTo: { type: Schema.Types.ObjectId, ref: "User" },
     aiRepliesLastHour: { type: Number, default: 0 },
-    aiWindowStart: Date,
+    aiWindowStart: Date
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 conversationSchema.index({ contact: 1, number: 1 }, { unique: true });
-export const Conversation = model<IConversation>(
-  "Conversation",
-  conversationSchema,
-);
+export const Conversation = model<IConversation>("Conversation", conversationSchema);
 
 // ── Message ─────────────────────────────────────────────
 export interface IMessage extends Document {
@@ -180,23 +162,19 @@ export interface IMessage extends Document {
   waMessageId?: string;
   status: "received" | "queued" | "sent" | "delivered" | "read" | "failed";
   error?: string;
+  errorCode?: number;
   sentBy?: Types.ObjectId;
 }
 const messageSchema = new Schema<IMessage>(
   {
-    conversation: {
-      type: Schema.Types.ObjectId,
-      ref: "Conversation",
-      required: true,
-      index: true,
-    },
+    conversation: { type: Schema.Types.ObjectId, ref: "Conversation", required: true, index: true },
     contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true },
     number: { type: Schema.Types.ObjectId, ref: "WabaNumber" },
     direction: { type: String, enum: ["in", "out"], required: true },
     author: {
       type: String,
       enum: ["contact", "ai", "human", "system", "workflow", "broadcast"],
-      required: true,
+      required: true
     },
     type: { type: String, default: "text" },
     text: { type: String, default: "" },
@@ -205,9 +183,10 @@ const messageSchema = new Schema<IMessage>(
     waMessageId: { type: String, index: true },
     status: { type: String, default: "received" },
     error: String,
-    sentBy: { type: Schema.Types.ObjectId, ref: "User" },
+    errorCode: { type: Number, index: true },
+    sentBy: { type: Schema.Types.ObjectId, ref: "User" }
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 export const Message = model<IMessage>("Message", messageSchema);
 
@@ -235,9 +214,9 @@ const templateSchema = new Schema<ITemplate>(
     variableCount: { type: Number, default: 0 },
     components: { type: [Schema.Types.Mixed], default: [] },
     metaId: String,
-    businessAccountId: String,
+    businessAccountId: String
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 templateSchema.index({ name: 1, language: 1 }, { unique: true });
 export const Template = model<ITemplate>("Template", templateSchema);
@@ -251,21 +230,8 @@ export interface IBroadcast extends Document {
   bodyParams: string[];
   audienceTags: string[];
   scheduledAt?: Date;
-  status:
-    | "draft"
-    | "scheduled"
-    | "running"
-    | "completed"
-    | "failed"
-    | "cancelled";
-  stats: {
-    total: number;
-    sent: number;
-    delivered: number;
-    read: number;
-    failed: number;
-    skipped: number;
-  };
+  status: "draft" | "scheduled" | "running" | "completed" | "failed" | "cancelled";
+  stats: { total: number; sent: number; delivered: number; read: number; failed: number; skipped: number };
 }
 const broadcastSchema = new Schema<IBroadcast>(
   {
@@ -283,10 +249,10 @@ const broadcastSchema = new Schema<IBroadcast>(
       delivered: { type: Number, default: 0 },
       read: { type: Number, default: 0 },
       failed: { type: Number, default: 0 },
-      skipped: { type: Number, default: 0 },
-    },
+      skipped: { type: Number, default: 0 }
+    }
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 export const Broadcast = model<IBroadcast>("Broadcast", broadcastSchema);
 
@@ -299,23 +265,15 @@ export interface IBroadcastRecipient extends Document {
 }
 const broadcastRecipientSchema = new Schema<IBroadcastRecipient>(
   {
-    broadcast: {
-      type: Schema.Types.ObjectId,
-      ref: "Broadcast",
-      required: true,
-      index: true,
-    },
+    broadcast: { type: Schema.Types.ObjectId, ref: "Broadcast", required: true, index: true },
     contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true },
     waMessageId: { type: String, index: true },
     status: { type: String, default: "pending" },
-    error: String,
+    error: String
   },
-  { timestamps: true },
+  { timestamps: true }
 );
-export const BroadcastRecipient = model<IBroadcastRecipient>(
-  "BroadcastRecipient",
-  broadcastRecipientSchema,
-);
+export const BroadcastRecipient = model<IBroadcastRecipient>("BroadcastRecipient", broadcastRecipientSchema);
 
 // ── Webhook workflow (event → approved template) ────────
 export interface IWorkflow extends Document {
@@ -367,11 +325,7 @@ const workflowSchema = new Schema<IWorkflow>(
     nameField: { type: String, default: "name" },
     addTags: { type: [String], default: [] },
     addLabels: { type: [String], default: [] },
-    dedupe: {
-      type: String,
-      enum: ["none", "once_per_contact", "once_per_day"],
-      default: "none",
-    },
+    dedupe: { type: String, enum: ["none", "once_per_contact", "once_per_day"], default: "none" },
     delayMinutes: { type: Number, default: 0 },
     enabled: { type: Boolean, default: true },
     verified: { type: Boolean, default: false },
@@ -384,10 +338,10 @@ const workflowSchema = new Schema<IWorkflow>(
       delivered: { type: Number, default: 0 },
       read: { type: Number, default: 0 },
       failed: { type: Number, default: 0 },
-      skipped: { type: Number, default: 0 },
-    },
+      skipped: { type: Number, default: 0 }
+    }
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 export const Workflow = model<IWorkflow>("Workflow", workflowSchema);
 
@@ -403,26 +357,58 @@ export interface IWorkflowEvent extends Document {
 }
 const workflowEventSchema = new Schema<IWorkflowEvent>(
   {
-    workflow: {
-      type: Schema.Types.ObjectId,
-      ref: "Workflow",
-      required: true,
-      index: true,
-    },
+    workflow: { type: Schema.Types.ObjectId, ref: "Workflow", required: true, index: true },
     contact: { type: Schema.Types.ObjectId, ref: "Contact" },
     waId: { type: String, index: true },
     payload: Schema.Types.Mixed,
     waMessageId: { type: String, index: true },
     status: { type: String, default: "received" },
     error: String,
-    runAt: Date,
+    runAt: Date
   },
-  { timestamps: true },
+  { timestamps: true }
 );
-export const WorkflowEvent = model<IWorkflowEvent>(
-  "WorkflowEvent",
-  workflowEventSchema,
+export const WorkflowEvent = model<IWorkflowEvent>("WorkflowEvent", workflowEventSchema);
+
+// ── Quality snapshots (trend tracking per number) ───────
+export interface IQualitySnapshot extends Document {
+  number: Types.ObjectId;
+  qualityRating: string;
+  messagingLimit: string;
+  status: string;
+  changed: boolean; // true when this differs from the previous snapshot
+}
+const qualitySnapshotSchema = new Schema<IQualitySnapshot>(
+  {
+    number: { type: Schema.Types.ObjectId, ref: "WabaNumber", required: true, index: true },
+    qualityRating: String,
+    messagingLimit: String,
+    status: String,
+    changed: { type: Boolean, default: false }
+  },
+  { timestamps: true }
 );
+export const QualitySnapshot = model<IQualitySnapshot>("QualitySnapshot", qualitySnapshotSchema);
+
+// ── Alerts (quality degradation, policy events) ─────────
+export interface IAlert extends Document {
+  level: "info" | "warning" | "critical";
+  title: string;
+  detail: string;
+  number?: Types.ObjectId;
+  acknowledged: boolean;
+}
+const alertSchema = new Schema<IAlert>(
+  {
+    level: { type: String, enum: ["info", "warning", "critical"], default: "info" },
+    title: { type: String, required: true },
+    detail: { type: String, default: "" },
+    number: { type: Schema.Types.ObjectId, ref: "WabaNumber" },
+    acknowledged: { type: Boolean, default: false }
+  },
+  { timestamps: true }
+);
+export const Alert = model<IAlert>("Alert", alertSchema);
 
 // ── Knowledge base ──────────────────────────────────────
 export interface IKnowledgeDoc extends Document {
@@ -434,14 +420,11 @@ const knowledgeSchema = new Schema<IKnowledgeDoc>(
   {
     title: { type: String, required: true },
     content: { type: String, required: true },
-    enabled: { type: Boolean, default: true },
+    enabled: { type: Boolean, default: true }
   },
-  { timestamps: true },
+  { timestamps: true }
 );
-export const KnowledgeDoc = model<IKnowledgeDoc>(
-  "KnowledgeDoc",
-  knowledgeSchema,
-);
+export const KnowledgeDoc = model<IKnowledgeDoc>("KnowledgeDoc", knowledgeSchema);
 
 // ── Settings (singleton) ────────────────────────────────
 export interface ISettings extends Document {
@@ -455,23 +438,27 @@ export interface ISettings extends Document {
   optOutKeywords: string[];
   optOutReply: string;
   outsideHoursMessage: string;
-  businessHours: {
-    start: string;
-    end: string;
-    timezone: string;
-    enabled: boolean;
-  };
+  businessHours: { start: string; end: string; timezone: string; enabled: boolean };
   // ── quality guardrails ──
   maxAiRepliesPerHour: number;
   maxReplyChars: number;
   maxMarketingPerContactPerDay: number;
   pauseAiAfterHumanReplyMinutes: number;
   blockSendOnRedQuality: boolean;
+  // ── AI safety layer ──
+  escalateWhenUnsure: boolean;
+  frustrationAutoHandoff: boolean;
+  blockPromoWhenNotAsked: boolean;
+  maxLinksPerReply: number;
+  conservativeOnYellowQuality: boolean;
+  autoPauseMarketingOnDegrade: boolean;
+  escalationMessage: string;
 }
 const settingsSchema = new Schema<ISettings>(
   {
-    // Accept any _id type so legacy docs with a string _id (e.g. "bot") don't
-    // cause a cast validation error when Mongoose tries to hydrate them.
+    // Accept any _id type so legacy documents with a string _id (e.g. "bot"),
+    // written by older versions, can still be read and migrated instead of
+    // throwing a cast error. Credit: Sachin's "fixes id issue".
     _id: { type: Schema.Types.Mixed },
     businessName: { type: String, default: "SVASTHA" },
     aiProvider: { type: String, enum: ["claude", "openai"], default: "claude" },
@@ -479,62 +466,66 @@ const settingsSchema = new Schema<ISettings>(
     systemPrompt: {
       type: String,
       default:
-        "You are a helpful, warm customer support assistant for our business on WhatsApp. Answer briefly (WhatsApp style, 1-3 short paragraphs max), in the customer's language. If you don't know something, say you'll check with the team. Never invent prices or commitments.",
+        "You are a helpful, warm customer support assistant for our business on WhatsApp. Answer briefly (WhatsApp style, 1-3 short paragraphs max), in the customer's language. If you don't know something, say you'll check with the team. Never invent prices or commitments."
     },
     aiGlobalEnabled: { type: Boolean, default: true },
     aiMaxTokens: { type: Number, default: 500 },
-    handoffKeywords: {
-      type: [String],
-      default: ["talk to human", "agent", "representative"],
-    },
+    handoffKeywords: { type: [String], default: ["talk to human", "agent", "representative"] },
     optOutKeywords: {
       type: [String],
-      default: [
-        "stop",
-        "unsubscribe",
-        "opt out",
-        "optout",
-        "do not message",
-        "band karo",
-      ],
+      default: ["stop", "unsubscribe", "opt out", "optout", "do not message", "band karo"]
     },
     optOutReply: {
       type: String,
       default:
-        "You've been unsubscribed and won't receive further messages from us. Reply START anytime to resume.",
+        "You've been unsubscribed and won't receive further messages from us. Reply START anytime to resume."
     },
     outsideHoursMessage: { type: String, default: "" },
     businessHours: {
       start: { type: String, default: "09:00" },
       end: { type: String, default: "21:00" },
       timezone: { type: String, default: "Asia/Kolkata" },
-      enabled: { type: Boolean, default: false },
+      enabled: { type: Boolean, default: false }
     },
     maxAiRepliesPerHour: { type: Number, default: 20 },
     maxReplyChars: { type: Number, default: 900 },
     maxMarketingPerContactPerDay: { type: Number, default: 2 },
     pauseAiAfterHumanReplyMinutes: { type: Number, default: 30 },
     blockSendOnRedQuality: { type: Boolean, default: true },
+    escalateWhenUnsure: { type: Boolean, default: true },
+    frustrationAutoHandoff: { type: Boolean, default: true },
+    blockPromoWhenNotAsked: { type: Boolean, default: true },
+    maxLinksPerReply: { type: Number, default: 1 },
+    conservativeOnYellowQuality: { type: Boolean, default: true },
+    autoPauseMarketingOnDegrade: { type: Boolean, default: true },
+    escalationMessage: {
+      type: String,
+      default:
+        "Let me check that with the team and get back to you shortly — I don't want to give you the wrong information."
+    }
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 export const Settings = model<ISettings>("Settings", settingsSchema);
 
+/**
+ * Settings live in exactly ONE document with a fixed _id.
+ * Without this, concurrent boots could create two documents and saves would
+ * appear to "revert" — you'd write to one and read back the other.
+ */
+export const SETTINGS_ID = new mongoose.Types.ObjectId("000000000000000000000001");
+
 export async function getSettings(): Promise<ISettings> {
-  // Prefer a document whose _id is a proper ObjectId; skip legacy string-id
-  // docs (e.g. _id: "bot") that were inserted by older app versions.
-  let s = await Settings.findOne({ _id: { $type: "objectId" } });
-  if (!s) {
-    // Fallback: try any document so existing string-id settings aren't lost
-    s = await Settings.findOne({ _id: { $not: { $type: "objectId" } } });
-    if (s) return s; // tolerate it if it's the only one
-    s = await Settings.create({});
-  }
-  return s;
+  const s = await Settings.findOneAndUpdate(
+    { _id: SETTINGS_ID },
+    { $setOnInsert: { _id: SETTINGS_ID } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  return s as ISettings;
 }
 
-/** Drop legacy single-number unique index on conversations if it exists. */
 export async function runMigrations(): Promise<void> {
+  // 1. Drop the legacy single-number unique index on conversations.
   try {
     const indexes = await Conversation.collection.indexes();
     const legacy = indexes.find((i) => i.name === "contact_1" && i.unique);
@@ -544,6 +535,26 @@ export async function runMigrations(): Promise<void> {
     }
   } catch {
     /* collection may not exist yet */
+  }
+
+  // 2. Consolidate duplicate settings documents onto the singleton _id.
+  //    Older versions could leave several settings documents behind — including
+  //    one with a string _id such as "bot" — so a save would write to one
+  //    document while the next read returned another. That looked exactly like
+  //    settings silently reverting after a refresh.
+  try {
+    const strays = await Settings.find({ _id: { $ne: SETTINGS_ID } })
+      .sort({ updatedAt: -1 })
+      .lean();
+    if (strays.length) {
+      const newest = strays[0];
+      const { _id, createdAt, updatedAt, __v, ...fields } = newest as Record<string, unknown>;
+      await Settings.findOneAndUpdate({ _id: SETTINGS_ID }, { $set: fields }, { upsert: true });
+      await Settings.deleteMany({ _id: { $ne: SETTINGS_ID } });
+      console.log(`[db] consolidated ${strays.length} stray settings document(s) into the singleton`);
+    }
+  } catch (e: any) {
+    console.warn("[db] settings migration skipped:", e.message);
   }
 }
 

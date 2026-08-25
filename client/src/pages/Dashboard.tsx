@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { MessageSquare, Users, Bot, Inbox as InboxIcon, ShieldAlert, UserMinus } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import type { AnalyticsOverview } from "../types";
+import type { AnalyticsOverview, Alert as AlertItem } from "../types";
 
 const qualityDot: Record<string, string> = {
   GREEN: "bg-emerald-500",
@@ -34,10 +34,17 @@ function Stat({ icon: Icon, label, value, hint }: { icon: any; label: string; va
 
 export default function Dashboard() {
   const [data, setData] = useState<AnalyticsOverview | null>(null);
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
 
   useEffect(() => {
-    api<AnalyticsOverview>("/analytics/overview").then(setData).catch(() => { });
+    api<AnalyticsOverview>("/analytics/overview").then(setData).catch(() => {});
+    api<AlertItem[]>("/alerts?unacknowledged=true").then(setAlerts).catch(() => {});
   }, []);
+
+  async function ack(id: string) {
+    await api(`/alerts/${id}/ack`, { method: "POST" });
+    setAlerts((prev) => prev.filter((a) => a._id !== id));
+  }
 
   const days: string[] = [];
   for (let i = 13; i >= 0; i--) {
@@ -56,6 +63,39 @@ export default function Dashboard() {
       <h1 className="text-2xl font-bold mb-1">Dashboard</h1>
       <p className="text-sm text-slate-500 mb-6">Last 30 days at a glance</p>
 
+      {/* Alerts — quality degradation, Meta throttling, policy events */}
+      {alerts.length > 0 && (
+        <div className="space-y-2 mb-6">
+          {alerts.map((a) => (
+            <div
+              key={a._id}
+              className={`rounded-xl border p-4 flex items-start gap-3 ${
+                a.level === "critical"
+                  ? "bg-red-50 border-red-200"
+                  : a.level === "warning"
+                  ? "bg-amber-50 border-amber-200"
+                  : "bg-sky-50 border-sky-200"
+              }`}
+            >
+              <ShieldAlert
+                size={18}
+                className={
+                  a.level === "critical" ? "text-red-600" : a.level === "warning" ? "text-amber-600" : "text-sky-600"
+                }
+              />
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-sm">{a.title}</div>
+                <p className="text-xs text-slate-600 mt-0.5">{a.detail}</p>
+                <p className="text-[11px] text-slate-400 mt-1">{new Date(a.createdAt).toLocaleString()}</p>
+              </div>
+              <button className="btn-secondary text-xs shrink-0" onClick={() => ack(a._id)}>
+                Dismiss
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
         <Stat icon={Users} label="Contacts" value={data?.contacts ?? "–"} />
         <Stat icon={InboxIcon} label="Open conversations" value={data?.openConvs ?? "–"} />
@@ -71,9 +111,41 @@ export default function Dashboard() {
           value={data ? `${data.automationRate}%` : "–"}
           hint={data ? `${data.aiReplies} AI replies` : undefined}
         />
-        <Stat icon={ShieldAlert} label="Waiting on a human" value={data?.needsHuman ?? "–"} />
-        <Stat icon={UserMinus} label="Opted out" value={data?.optedOut ?? "–"} />
+        <Stat
+          icon={ShieldAlert}
+          label="Waiting on a human"
+          value={data?.needsHuman ?? "–"}
+          hint={data?.atRisk ? `${data.atRisk} at risk of blocking` : undefined}
+        />
+        <Stat
+          icon={UserMinus}
+          label="Opted out"
+          value={data?.optedOut ?? "–"}
+          hint={data?.escalations ? `${data.escalations} AI escalations` : undefined}
+        />
       </div>
+
+      {/* Failed sends — the earliest warning of a quality problem */}
+      {!!data?.errors?.length && (
+        <div className="card p-6 mb-6">
+          <h2 className="font-semibold mb-1">Failed sends (30 days)</h2>
+          <p className="text-xs text-slate-500 mb-4">
+            Repeated failures here usually precede a quality downgrade. Code 131049 means Meta is deliberately
+            withholding your marketing — reduce frequency.
+          </p>
+          <div className="space-y-2">
+            {data.errors.map((e, i) => (
+              <div key={i} className="flex items-start justify-between gap-4 text-sm border-b border-slate-100 pb-2 last:border-0">
+                <div className="min-w-0">
+                  <span className="font-medium">{e.message}</span>
+                  {e.code && <span className="text-xs text-slate-400 ml-2">code {e.code}</span>}
+                </div>
+                <span className="font-bold text-red-600 shrink-0">{e.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Number health */}
       <div className="card p-6 mb-6">

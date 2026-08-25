@@ -25,14 +25,12 @@ async function main() {
       limit: "5mb",
       verify: (req, _res, buf) => {
         (req as any).rawBody = buf;
-      },
-    }),
+      }
+    })
   );
   app.use(express.urlencoded({ extended: true }));
 
-  app.get("/api/health", (_req, res) =>
-    res.json({ ok: true, name: "SVASTHA WABIZ" }),
-  );
+  app.get("/api/health", (_req, res) => res.json({ ok: true, name: "SVASTHA WABIZ" }));
   app.use("/api/webhook", webhookRouter); // Meta → us
   app.use("/api/hooks", hooksRouter); // your apps → us (workflow triggers)
   app.use("/api/auth", authRouter);
@@ -42,8 +40,7 @@ async function main() {
   app.use(express.static(publicDir));
   app.get(/^(?!\/api).*/, (_req, res) => {
     res.sendFile(path.join(publicDir, "index.html"), (err) => {
-      if (err)
-        res.status(404).send("SVASTHA WABIZ API running. Frontend not built.");
+      if (err) res.status(404).send("SVASTHA WABIZ API running. Frontend not built.");
     });
   });
 

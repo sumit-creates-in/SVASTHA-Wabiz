@@ -9,28 +9,71 @@ export const authRouter = Router();
 
 authRouter.post("/login", async (req, res) => {
   const { email, password } = req.body || {};
-  const user = await User.findOne({
-    email: String(email || "").toLowerCase(),
-    active: true,
-  });
-  if (
-    !user ||
-    !(await bcrypt.compare(String(password || ""), user.passwordHash))
-  ) {
+  const user = await User.findOne({ email: String(email || "").toLowerCase(), active: true });
+  if (!user || !(await bcrypt.compare(String(password || ""), user.passwordHash))) {
     res.status(401).json({ error: "Invalid email or password" });
     return;
   }
-  const token = jwt.sign(
-    { sub: String(user._id), role: user.role },
-    env.jwtSecret,
-    {
-      expiresIn: "30d",
-    },
-  );
-  res.json({
-    token,
-    user: { id: user._id, email: user.email, name: user.name, role: user.role },
+  const token = jwt.sign({ sub: String(user._id), role: user.role }, env.jwtSecret, {
+    expiresIn: "30d"
   });
+  res.json({ token, user: { id: user._id, email: user.email, name: user.name, role: user.role } });
+});
+
+/**
+ * Registration for the "Create account" tab on the login page.
+ *
+ * Deliberately NOT open to the public: this dashboard exposes every customer
+ * conversation, so anyone who found the URL could otherwise sign up and read
+ * them. Registration is allowed only when:
+ *   - no users exist yet (first-run bootstrap), or
+ *   - SIGNUP_CODE is set on the server and the request supplies it.
+ * Otherwise, add teammates from Settings → Agents as an admin.
+ */
+authRouter.post("/register", async (req, res) => {
+  const { email, password, name, code } = req.body || {};
+  if (!email || !password) {
+    res.status(400).json({ error: "Email and password are required" });
+    return;
+  }
+  if (String(password).length < 6) {
+    res.status(400).json({ error: "Password must be at least 6 characters" });
+    return;
+  }
+
+  const userCount = await User.countDocuments();
+  const isBootstrap = userCount === 0;
+  if (!isBootstrap) {
+    if (!env.signupCode) {
+      res.status(403).json({
+        error: "Public sign-up is disabled. Ask an admin to create your account."
+      });
+      return;
+    }
+    if (String(code || "") !== env.signupCode) {
+      res.status(403).json({ error: "Invalid sign-up code" });
+      return;
+    }
+  }
+
+  const normalised = String(email).toLowerCase().trim();
+  if (await User.findOne({ email: normalised })) {
+    res.status(409).json({ error: "An account with this email already exists" });
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(String(password), 10);
+  const user = await User.create({
+    email: normalised,
+    passwordHash,
+    name: name || "User",
+    role: isBootstrap ? "admin" : "agent"
+  });
+
+  const token = jwt.sign({ sub: String(user._id), role: user.role }, env.jwtSecret, {
+    expiresIn: "30d"
+  });
+  res.json({ token, user: { id: user._id, email: user.email, name: user.name, role: user.role } });
 });
 
 /** Create the first admin user if none exists. */
@@ -38,12 +81,7 @@ export async function ensureAdmin(): Promise<void> {
   const count = await User.countDocuments();
   if (count === 0) {
     const passwordHash = await bcrypt.hash(env.adminPassword, 10);
-    await User.create({
-      email: env.adminEmail,
-      passwordHash,
-      name: "Admin",
-      role: "admin",
-    });
+    await User.create({ email: env.adminEmail, passwordHash, name: "Admin", role: "admin" });
     console.log(`[auth] created admin user ${env.adminEmail}`);
   }
 }
@@ -57,7 +95,7 @@ export async function seedNumberFromEnv(): Promise<void> {
     label: "Primary",
     businessAccountId: env.whatsapp.businessAccountId,
     phoneNumberId: env.whatsapp.phoneNumberId,
-    purpose: "mixed",
+    purpose: "mixed"
   });
   console.log("[numbers] seeded primary number from environment");
   await syncNumberHealth(num).catch(() => {});

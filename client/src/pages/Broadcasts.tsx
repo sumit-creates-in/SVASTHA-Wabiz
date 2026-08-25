@@ -34,8 +34,8 @@ export default function Broadcasts() {
 
   useEffect(() => {
     load();
-    api<Template[]>("/templates").then(setTemplates).catch(() => { });
-    api<WabaNumber[]>("/numbers").then(setNumbers).catch(() => { });
+    api<Template[]>("/templates").then(setTemplates).catch(() => {});
+    api<WabaNumber[]>("/numbers").then(setNumbers).catch(() => {});
     const socket = getSocket();
     const onUpdate = () => load();
     socket.on("broadcast:update", onUpdate);

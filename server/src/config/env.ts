@@ -7,6 +7,8 @@ export const env = {
   jwtSecret: e.JWT_SECRET || "dev-secret-change-me",
   adminEmail: e.ADMIN_EMAIL || "admin@svastha.local",
   adminPassword: e.ADMIN_PASSWORD || "admin123",
+  /** Optional shared code that allows self-registration after the first user. */
+  signupCode: e.SIGNUP_CODE || "",
   whatsapp: {
     token: e.WHATSAPP_TOKEN || "",
     phoneNumberId: e.WHATSAPP_PHONE_NUMBER_ID || "",
