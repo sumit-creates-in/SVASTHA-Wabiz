@@ -9,7 +9,8 @@ import {
   MoreVertical,
   RefreshCw,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Pencil
 } from "lucide-react";
 import { api } from "../lib/api";
 import { getSocket } from "../lib/socket";
@@ -34,6 +35,7 @@ export default function Workflows() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [detail, setDetail] = useState<Workflow | null>(null);
+  const [editWorkflow, setEditWorkflow] = useState<Workflow | null>(null);
   const [showReport, setShowReport] = useState(false);
   const [statusFilter, setStatusFilter] = useState("");
   const [verifiedFilter, setVerifiedFilter] = useState("");
@@ -210,6 +212,9 @@ export default function Workflows() {
                     >
                       {copied === w._id ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
                     </button>
+                    <button className="btn-secondary text-xs" title="Edit" onClick={() => setEditWorkflow(w)}>
+                      <Pencil size={13} />
+                    </button>
                     <button className="btn-secondary text-xs" title="Details" onClick={() => setDetail(w)}>
                       <MoreVertical size={13} />
                     </button>
@@ -238,6 +243,18 @@ export default function Workflows() {
           onClose={() => setShowNew(false)}
           onSaved={() => {
             setShowNew(false);
+            load();
+          }}
+        />
+      )}
+      {editWorkflow && (
+        <EditWorkflowForm
+          workflow={editWorkflow}
+          numbers={numbers}
+          templates={templates}
+          onClose={() => setEditWorkflow(null)}
+          onSaved={() => {
+            setEditWorkflow(null);
             load();
           }}
         />
@@ -464,6 +481,220 @@ function WorkflowForm({
     </Modal>
   );
 }
+
+function EditWorkflowForm({
+  workflow,
+  numbers,
+  templates,
+  onClose,
+  onSaved
+}: {
+  workflow: Workflow;
+  numbers: WabaNumber[];
+  templates: Template[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const numberId = typeof workflow.number === "string" ? workflow.number : workflow.number._id;
+  const [form, setForm] = useState({
+    name: workflow.name,
+    description: workflow.description || "",
+    number: numberId,
+    templateName: workflow.templateName,
+    templateLanguage: workflow.templateLanguage,
+    bodyParams: (workflow.bodyParams || []).join(" | "),
+    headerParams: (workflow.headerParams || []).join(" | "),
+    phoneField: workflow.phoneField,
+    nameField: workflow.nameField || "",
+    addTags: (workflow.addTags || []).join(", "),
+    addLabels: (workflow.addLabels || []).join(", "),
+    dedupe: workflow.dedupe,
+    delayMinutes: workflow.delayMinutes ?? 0
+  });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const selected =
+    templates.find((t) => t.name === form.templateName && t.language === form.templateLanguage) ??
+    templates.find((t) => t.name === form.templateName);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      if (!form.templateName) { setError("Please select a template."); setBusy(false); return; }
+      await api(`/workflows/${workflow._id}`, {
+        method: "PATCH",
+        body: {
+          ...form,
+          bodyParams: form.bodyParams ? form.bodyParams.split("|").map((p) => p.trim()) : [],
+          headerParams: form.headerParams ? form.headerParams.split("|").map((p) => p.trim()) : [],
+          addTags: form.addTags.split(",").map((t) => t.trim()).filter(Boolean),
+          addLabels: form.addLabels.split(",").map((t) => t.trim()).filter(Boolean),
+          delayMinutes: Number(form.delayMinutes) || 0
+        }
+      });
+      onSaved();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Edit — ${workflow.name}`} onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Workflow name</label>
+            <input
+              className="input"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              required
+            />
+          </div>
+          <div>
+            <label className="label">Send from number</label>
+            <select
+              className="input"
+              value={form.number}
+              onChange={(e) => setForm({ ...form, number: e.target.value })}
+              required
+            >
+              <option value="">Select number…</option>
+              {numbers.map((n) => (
+                <option key={n._id} value={n._id}>
+                  {n.label} · {n.displayPhoneNumber} [{n.purpose}]
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-400 mt-1">Any number can send AUTHENTICATION / OTP templates regardless of purpose.</p>
+          </div>
+        </div>
+
+        <div>
+          <label className="label">Approved template</label>
+          <select
+            className="input"
+            value={`${form.templateName}||${form.templateLanguage}`}
+            onChange={(e) => {
+              const [tName, tLang] = e.target.value.split("||");
+              setForm({ ...form, templateName: tName, templateLanguage: tLang });
+            }}
+            required
+          >
+            <option value="">Select template…</option>
+            {templates
+              .filter((t) => t.status === "APPROVED")
+              .map((t) => (
+                <option key={t._id} value={`${t.name}||${t.language}`}>
+                  {t.name} ({t.language}) · {t.category}
+                </option>
+              ))}
+          </select>
+          {selected && (
+            <p className="text-xs text-slate-500 mt-1 bg-slate-50 rounded-lg p-2 whitespace-pre-wrap">
+              {selected.bodyText}
+            </p>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Phone field in the payload</label>
+            <input
+              className="input"
+              value={form.phoneField}
+              onChange={(e) => setForm({ ...form, phoneField: e.target.value })}
+            />
+            <p className="text-xs text-slate-400 mt-1">Dot paths work: customer.phone</p>
+          </div>
+          <div>
+            <label className="label">Name field in the payload</label>
+            <input
+              className="input"
+              value={form.nameField}
+              onChange={(e) => setForm({ ...form, nameField: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="label">Body variables — separate with | , reference payload fields with {"{{field}}"}</label>
+          <input
+            className="input font-mono text-xs"
+            placeholder="{{name}} | {{course.title}} | {{start_date}}"
+            value={form.bodyParams}
+            onChange={(e) => setForm({ ...form, bodyParams: e.target.value })}
+          />
+          {selected && selected.variableCount > 0 && (
+            <p className="text-xs text-amber-600 mt-1">
+              This template expects {selected.variableCount} variable{selected.variableCount > 1 ? "s" : ""}.
+            </p>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="label">Send only once?</label>
+            <select
+              className="input"
+              value={form.dedupe}
+              onChange={(e) => setForm({ ...form, dedupe: e.target.value as 'none' | 'once_per_contact' | 'once_per_day' })}
+            >
+              <option value="none">Every time</option>
+              <option value="once_per_contact">Once per contact</option>
+              <option value="once_per_day">Once per contact per day</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Delay (minutes)</label>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              value={form.delayMinutes}
+              onChange={(e) => setForm({ ...form, delayMinutes: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <label className="label">Tag the contact</label>
+            <input
+              className="input"
+              placeholder="course-signup"
+              value={form.addTags}
+              onChange={(e) => setForm({ ...form, addTags: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="label">Label the chat (helps lead management)</label>
+          <input
+            className="input"
+            placeholder="Lead, Course-Reg"
+            value={form.addLabels}
+            onChange={(e) => setForm({ ...form, addLabels: e.target.value })}
+          />
+        </div>
+
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        <div className="flex gap-2">
+          <button className="btn-primary" disabled={busy}>
+            {busy ? "Saving…" : "Save changes"}
+          </button>
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 
 function WorkflowDetail({
   workflow,
