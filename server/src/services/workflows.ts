@@ -181,6 +181,7 @@ export async function fireWorkflow(
     bodyParams,
     headerParams,
     buttonParam,
+    tpl?.category,
   );
   if (result.error) return finish("failed", result.error);
 

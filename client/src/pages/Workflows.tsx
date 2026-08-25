@@ -46,8 +46,8 @@ export default function Workflows() {
 
   useEffect(() => {
     load();
-    api<WabaNumber[]>("/numbers").then(setNumbers).catch(() => {});
-    api<Template[]>("/templates").then(setTemplates).catch(() => {});
+    api<WabaNumber[]>("/numbers").then(setNumbers).catch(() => { });
+    api<Template[]>("/templates").then(setTemplates).catch(() => { });
     const socket = getSocket();
     const onUpdate = () => load();
     socket.on("workflow:update", onUpdate);
@@ -154,15 +154,13 @@ export default function Workflows() {
                 <td className="px-4 py-4">
                   <button
                     onClick={() => toggle(w)}
-                    className={`w-11 h-6 rounded-full transition-colors relative ${
-                      w.enabled ? "bg-emerald-500" : "bg-slate-300"
-                    }`}
+                    className={`w-11 h-6 rounded-full transition-colors relative ${w.enabled ? "bg-emerald-500" : "bg-slate-300"
+                      }`}
                     title={w.enabled ? "Enabled" : "Disabled"}
                   >
                     <span
-                      className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${
-                        w.enabled ? "left-[22px]" : "left-0.5"
-                      }`}
+                      className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${w.enabled ? "left-[22px]" : "left-0.5"
+                        }`}
                     />
                   </button>
                 </td>
@@ -311,18 +309,21 @@ function WorkflowForm({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const selected = templates.find((t) => t.name === form.templateName);
+  // Match by name + language so the exact approved translation is used
+  const selected = templates.find(
+    (t) => t.name === form.templateName && t.language === form.templateLanguage
+  ) ?? templates.find((t) => t.name === form.templateName);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError("");
     try {
+      if (!form.templateName) { setError("Please select a template."); setBusy(false); return; }
       await api("/workflows", {
         method: "POST",
         body: {
           ...form,
-          templateLanguage: selected?.language || form.templateLanguage,
           bodyParams: form.bodyParams ? form.bodyParams.split("|").map((p) => p.trim()) : [],
           headerParams: form.headerParams ? form.headerParams.split("|").map((p) => p.trim()) : [],
           addTags: form.addTags.split(",").map((t) => t.trim()).filter(Boolean),
@@ -369,15 +370,18 @@ function WorkflowForm({
           <label className="label">Approved template</label>
           <select
             className="input"
-            value={form.templateName}
-            onChange={(e) => setForm({ ...form, templateName: e.target.value })}
+            value={`${form.templateName}||${form.templateLanguage}`}
+            onChange={(e) => {
+              const [tName, tLang] = e.target.value.split("||");
+              setForm({ ...form, templateName: tName, templateLanguage: tLang });
+            }}
             required
           >
             <option value="">Select template…</option>
             {templates
               .filter((t) => t.status === "APPROVED")
               .map((t) => (
-                <option key={t._id} value={t.name}>
+                <option key={t._id} value={`${t.name}||${t.language}`}>
                   {t.name} ({t.language}) · {t.category}
                 </option>
               ))}
@@ -568,8 +572,8 @@ function WorkflowDetail({
                       ["sent", "delivered", "read"].includes(e.status)
                         ? "text-emerald-600"
                         : e.status === "failed"
-                        ? "text-red-600"
-                        : "text-slate-400"
+                          ? "text-red-600"
+                          : "text-slate-400"
                     }
                   >
                     {e.status}
@@ -589,7 +593,7 @@ function WorkflowDetail({
 function ReportModal({ onClose }: { onClose: () => void }) {
   const [data, setData] = useState<{ totals: any; recent: WorkflowEvent[] } | null>(null);
   useEffect(() => {
-    api<{ totals: any; recent: WorkflowEvent[] }>("/workflows-report").then(setData).catch(() => {});
+    api<{ totals: any; recent: WorkflowEvent[] }>("/workflows-report").then(setData).catch(() => { });
   }, []);
   return (
     <Modal title="Workflow report" onClose={onClose} wide>
