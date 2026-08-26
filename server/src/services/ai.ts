@@ -25,6 +25,64 @@ export interface AiDecision {
   args?: Record<string, unknown>;
 }
 
+/**
+ * If they arrived by tapping a Meta ad, we know what they were looking at.
+ * Opening with that beats a cold "how can I help you".
+ */
+function referralContextBlock(contact: IContact): string {
+  const r = contact.referral;
+  if (!r || !r.sourceId) return "";
+  const parts = [
+    r.headline ? `Ad headline: "${r.headline}"` : "",
+    r.body ? `Ad text: "${r.body}"` : "",
+    r.sourceType ? `Source: ${r.sourceType}` : ""
+  ].filter(Boolean);
+  if (!parts.length) return "";
+
+  return `\n\n## How this person reached us
+They tapped one of our ads on Facebook or Instagram to start this chat.
+${parts.join("\n")}
+
+Assume they are interested in what that ad offered. Acknowledge it naturally in your first reply instead of asking what they need — for example "Hi! Saw you're interested in the 21 Day Challenge 🙏 What would you like to know?". Do not read the ad text back to them word for word.`;
+}
+
+/**
+ * The model has no clock. Without this it cannot turn "tomorrow evening" into a
+ * real date, so booked calls land on the wrong day. Everything is IST because
+ * that's when the team actually calls people.
+ */
+function dateContextBlock(): string {
+  const tz = "Asia/Kolkata";
+  const now = new Date();
+  const fmt = (d: Date) =>
+    d.toLocaleDateString("en-CA", { timeZone: tz }); // YYYY-MM-DD
+  const dayName = (d: Date) =>
+    d.toLocaleDateString("en-GB", { timeZone: tz, weekday: "long" });
+
+  const today = new Date(now);
+  const upcoming: string[] = [];
+  for (let i = 1; i <= 7; i++) {
+    const d = new Date(now.getTime() + i * 86400000);
+    upcoming.push(`- ${dayName(d)} = ${fmt(d)}${i === 1 ? " (this is “tomorrow”)" : ""}`);
+  }
+
+  return `\n\n## Today's date and time
+Today is ${dayName(today)}, ${fmt(today)} (IST). The current time is ${now.toLocaleTimeString(
+    "en-GB",
+    { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false },
+  )} IST.
+
+The next seven days:
+${upcoming.join("\n")}
+
+## Converting what people say into a date and time
+- Work out the exact calendar date from whatever they say. "Tomorrow" is the date listed above. A weekday name means the next such date after today.
+- Convert times to 24-hour format. "Morning" = 11:00, "afternoon" = 15:00, "evening" = 18:00, unless they give a specific time.
+- Our calling hours are 10:00 to 19:00 IST. If they ask for a time outside that, warmly suggest the nearest time inside our hours and use that instead.
+- If they ask for a time that has already passed today, assume they mean tomorrow and confirm it with them.
+- Always repeat the day and time back to them in plain language when you confirm.`;
+}
+
 async function buildSystemPrompt(
   number?: IWabaNumber | null,
   contact?: IContact | null,
@@ -32,6 +90,11 @@ async function buildSystemPrompt(
   const settings = await getSettings();
   const docs = await KnowledgeDoc.find({ enabled: true }).lean();
   let prompt = number?.systemPromptOverride?.trim() || settings.systemPrompt;
+
+  prompt += dateContextBlock();
+
+  // Where they came from — a click-to-WhatsApp ad tells us what they're after.
+  if (contact) prompt += referralContextBlock(contact);
 
   if (number) {
     prompt += `\n\nYou are answering on the business WhatsApp number "${number.verifiedName || number.label}" (${number.displayPhoneNumber}).`;

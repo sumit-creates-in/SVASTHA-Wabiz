@@ -89,20 +89,54 @@ export async function handleInboundMessage(
     return; // Meta retries
   }
 
+  // Click-to-WhatsApp ads attach the ad they tapped to their first message.
+  // Capture it so the AI can open with context and so you can see which
+  // creative actually produces bookings.
+  const ref = msg.referral;
+  const referralUpdate = ref?.source_id
+    ? {
+        referral: {
+          sourceId: ref.source_id,
+          sourceType: ref.source_type,
+          sourceUrl: ref.source_url,
+          headline: ref.headline,
+          body: ref.body,
+          mediaType: ref.media_type,
+          ctwaClid: ref.ctwa_clid,
+          capturedAt: new Date(),
+        },
+      }
+    : {};
+  if (ref?.source_id) {
+    console.log(
+      `[ads] ${waId} came from ad ${ref.source_id}${ref.headline ? ` — "${ref.headline}"` : ""}`,
+    );
+  }
+
   const contact = await Contact.findOneAndUpdate(
     { waId },
     {
       $set: {
         lastSeenAt: new Date(),
         ...(profileName ? { name: profileName } : {}),
+        ...referralUpdate,
       },
+      ...(ref?.source_id
+        ? { $addToSet: { tags: { $each: ["from-ad"] } } }
+        : {}),
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
 
   const conversation = await Conversation.findOneAndUpdate(
     { contact: contact._id, number: number._id },
-    { $setOnInsert: { aiEnabled: number.aiEnabled }, $set: { status: "open" } },
+    {
+      $setOnInsert: { aiEnabled: number.aiEnabled },
+      $set: { status: "open" },
+      ...(ref?.source_id
+        ? { $addToSet: { labels: { $each: ["From-Ad"] } } }
+        : {}),
+    },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
 

@@ -105,6 +105,17 @@ export interface IContact extends Document {
   customerData: Map<string, string>;
   customerSyncedAt?: Date;
   customerLookupError?: string;
+  /** Meta click-to-WhatsApp ad the person came from, if any. */
+  referral?: {
+    sourceId?: string;
+    sourceType?: string;
+    sourceUrl?: string;
+    headline?: string;
+    body?: string;
+    mediaType?: string;
+    ctwaClid?: string;
+    capturedAt?: Date;
+  };
 }
 const contactSchema = new Schema<IContact>(
   {
@@ -123,7 +134,17 @@ const contactSchema = new Schema<IContact>(
     externalId: { type: String, index: true },
     customerData: { type: Map, of: String, default: {} },
     customerSyncedAt: Date,
-    customerLookupError: String
+    customerLookupError: String,
+    referral: {
+      sourceId: String,
+      sourceType: String,
+      sourceUrl: String,
+      headline: String,
+      body: String,
+      mediaType: String,
+      ctwaClid: String,
+      capturedAt: Date
+    }
   },
   { timestamps: true }
 );
@@ -672,6 +693,8 @@ export interface ISettings extends Document {
   customerFoundPath: string;
   /** Dot-path to the object of customer fields to show the AI. */
   customerDataPath: string;
+  /** Bumped when we ship new recommended prompts, so they install exactly once. */
+  seedVersion: number;
 }
 const settingsSchema = new Schema<ISettings>(
   {
@@ -728,7 +751,8 @@ const settingsSchema = new Schema<ISettings>(
     customerLookupHeaders: { type: Map, of: String, default: {} },
     customerLookupCacheMinutes: { type: Number, default: 30 },
     customerFoundPath: { type: String, default: "found" },
-    customerDataPath: { type: String, default: "customer" }
+    customerDataPath: { type: String, default: "customer" },
+    seedVersion: { type: Number, default: 0 }
   },
   { timestamps: true }
 );

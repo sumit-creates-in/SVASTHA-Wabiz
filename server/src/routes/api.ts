@@ -1139,6 +1139,19 @@ apiRouter.patch("/settings", async (req, res) => {
   res.json(s);
 });
 
+/** Put the recommended Svastha prompt back, e.g. after an experiment went wrong. */
+apiRouter.post(
+  "/settings/restore-prompt",
+  requirePermission("settings.manage"),
+  async (_req, res) => {
+    const { SVASTHA_SYSTEM_PROMPT } = await import("../seed");
+    const s = await getSettings();
+    s.systemPrompt = SVASTHA_SYSTEM_PROMPT;
+    await s.save();
+    res.json(s);
+  },
+);
+
 apiRouter.get("/analytics/overview", async (_req, res) => {
   const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
   const [contacts, openConvs, msgIn, msgOut, aiReplies, byDay, numbers, optedOut, needsHuman] =

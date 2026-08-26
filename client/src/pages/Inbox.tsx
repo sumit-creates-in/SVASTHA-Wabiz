@@ -470,6 +470,17 @@ export default function Inbox() {
                   <Row label="Opted out" value={active.contact?.optedOut ? "Yes" : "No"} />
                   <Row label="Tags" value={active.contact?.tags?.join(", ") || "—"} />
                 </dl>
+                {active.contact?.referral?.sourceId && (
+                  <div className="mt-2 bg-sky-50 rounded-lg p-2.5 text-xs">
+                    <div className="font-semibold text-sky-800 mb-0.5">Came from an ad</div>
+                    {active.contact.referral.headline && (
+                      <p className="text-sky-700">"{active.contact.referral.headline}"</p>
+                    )}
+                    <p className="text-sky-600/70 mt-1 font-mono text-[10px]">
+                      {active.contact.referral.sourceType} · {active.contact.referral.sourceId}
+                    </p>
+                  </div>
+                )}
               </section>
 
               <section>
