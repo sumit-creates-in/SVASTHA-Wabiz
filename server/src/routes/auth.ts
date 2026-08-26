@@ -10,8 +10,14 @@ export const authRouter = Router();
 
 authRouter.post("/login", async (req, res) => {
   const { email, password } = req.body || {};
-  const user = await User.findOne({ email: String(email || "").toLowerCase(), active: true });
-  if (!user || !(await bcrypt.compare(String(password || ""), user.passwordHash))) {
+  const user = await User.findOne({
+    email: String(email || "").toLowerCase(),
+    active: true,
+  });
+  if (
+    !user ||
+    !(await bcrypt.compare(String(password || ""), user.passwordHash))
+  ) {
     res.status(401).json({ error: "Invalid email or password" });
     return;
   }
@@ -19,9 +25,13 @@ authRouter.post("/login", async (req, res) => {
   user.lastLoginAt = new Date();
   await user.save();
 
-  const token = jwt.sign({ sub: String(user._id), role: user.role }, env.jwtSecret, {
-    expiresIn: "30d"
-  });
+  const token = jwt.sign(
+    { sub: String(user._id), role: user.role },
+    env.jwtSecret,
+    {
+      expiresIn: "30d",
+    },
+  );
   res.json({
     token,
     user: {
@@ -30,8 +40,8 @@ authRouter.post("/login", async (req, res) => {
       name: user.name,
       role: user.role,
       maskPhoneNumbers: !!user.maskPhoneNumbers,
-      permissions: effectivePermissions(user)
-    }
+      permissions: effectivePermissions(user),
+    },
   });
 });
 
@@ -61,7 +71,8 @@ authRouter.post("/register", async (req, res) => {
   if (!isBootstrap) {
     if (!env.signupCode) {
       res.status(403).json({
-        error: "Public sign-up is disabled. Ask an admin to create your account."
+        error:
+          "Public sign-up is disabled. Ask an admin to create your account.",
       });
       return;
     }
@@ -73,7 +84,9 @@ authRouter.post("/register", async (req, res) => {
 
   const normalised = String(email).toLowerCase().trim();
   if (await User.findOne({ email: normalised })) {
-    res.status(409).json({ error: "An account with this email already exists" });
+    res
+      .status(409)
+      .json({ error: "An account with this email already exists" });
     return;
   }
 
@@ -83,13 +96,20 @@ authRouter.post("/register", async (req, res) => {
     passwordHash,
     name: name || "User",
     role: isBootstrap ? "admin" : "agent",
-    permissions: isBootstrap ? ROLE_PRESETS.admin : ROLE_PRESETS.agent
+    permissions: isBootstrap ? ROLE_PRESETS.admin : ROLE_PRESETS.agent,
   });
 
-  const token = jwt.sign({ sub: String(user._id), role: user.role }, env.jwtSecret, {
-    expiresIn: "30d"
+  const token = jwt.sign(
+    { sub: String(user._id), role: user.role },
+    env.jwtSecret,
+    {
+      expiresIn: "30d",
+    },
+  );
+  res.json({
+    token,
+    user: { id: user._id, email: user.email, name: user.name, role: user.role },
   });
-  res.json({ token, user: { id: user._id, email: user.email, name: user.name, role: user.role } });
 });
 
 /** Who am I, and what am I allowed to do? Drives the UI. */
@@ -99,7 +119,9 @@ authRouter.get("/me", async (req, res) => {
   try {
     const payload = jwt.verify(token, env.jwtSecret) as { sub: string };
     const user = await User.findById(payload.sub)
-      .select("name email role active permissions allowedNumbers maskPhoneNumbers")
+      .select(
+        "name email role active permissions allowedNumbers maskPhoneNumbers",
+      )
       .lean();
     if (!user || !user.active) {
       res.status(401).json({ error: "Account is inactive" });
@@ -112,7 +134,7 @@ authRouter.get("/me", async (req, res) => {
       role: user.role,
       maskPhoneNumbers: !!user.maskPhoneNumbers,
       allowedNumbers: (user.allowedNumbers || []).map(String),
-      permissions: effectivePermissions(user as any)
+      permissions: effectivePermissions(user as any),
     });
   } catch {
     res.status(401).json({ error: "Unauthorized" });
@@ -129,7 +151,7 @@ export async function ensureAdmin(): Promise<void> {
       passwordHash,
       name: "Admin",
       role: "admin",
-      permissions: ROLE_PRESETS.admin
+      permissions: ROLE_PRESETS.admin,
     });
     console.log(`[auth] created admin user ${env.adminEmail}`);
   }
@@ -144,7 +166,7 @@ export async function seedNumberFromEnv(): Promise<void> {
     label: "Primary",
     businessAccountId: env.whatsapp.businessAccountId,
     phoneNumberId: env.whatsapp.phoneNumberId,
-    purpose: "mixed"
+    purpose: "mixed",
   });
   console.log("[numbers] seeded primary number from environment");
   await syncNumberHealth(num).catch(() => {});
