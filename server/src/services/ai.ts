@@ -347,6 +347,67 @@ export async function generateReply(
   return "";
 }
 
+/** Returned when following up would be a bad idea. */
+export const FOLLOWUP_SKIP = "[[SKIP]]";
+
+/**
+ * Write a single nudge for someone who went quiet.
+ *
+ * The hard part isn't writing the nudge — it's knowing when NOT to. Chasing
+ * someone who already said no is how a number gets blocked and reported, so
+ * the model is told to return a skip marker instead.
+ */
+export async function generateFollowUp(
+  conversationId: Types.ObjectId,
+  number: IWabaNumber | null,
+  contact: IContact | null,
+  opts: { attempt: number; hoursQuiet: number; lastNudges: string[] },
+): Promise<string> {
+  try {
+    const settings = await getSettings();
+    const turns = await buildHistory(conversationId, 16);
+    if (!turns.length) return FOLLOWUP_SKIP;
+
+    const base = await buildSystemPrompt(number, contact);
+
+    const system = `${base}
+
+## YOUR TASK RIGHT NOW — write one follow-up message
+This person stopped replying about ${Math.round(opts.hoursQuiet)} hour(s) ago. This is follow-up attempt ${opts.attempt}.
+${opts.lastNudges.length ? `You have already sent these nudges — do NOT repeat them or say the same thing differently:\n${opts.lastNudges.map((n) => `- "${n}"`).join("\n")}` : ""}
+
+Write ONE short message (maximum 2 sentences) that picks up naturally from where the conversation stopped. Reference the specific thing that was being discussed — their goal, the question you asked, whatever they were deciding. Make it easy to reply to.
+
+RETURN THE MARKER ${FOLLOWUP_SKIP} AND NOTHING ELSE IF:
+- They said no, not interested, not now, "cannot afford", "will think about it and let you know", or asked you to stop.
+- They already booked a call, or their question was fully answered and needed no reply.
+- They sound irritated, or the last exchange ended badly.
+- This would be the third or later nudge and they have never once replied.
+- Anything about the conversation makes chasing them feel pushy.
+
+Chasing someone who has already declined gets our number blocked and reported. When in doubt, skip.
+Never mention that this is an automated follow-up. Never apologise for messaging again. Do not open with "Just following up".`;
+
+    let raw: string;
+    if (settings.aiProvider === "openai" && env.ai.openaiKey) {
+      const model = settings.aiModel.startsWith("gpt") ? settings.aiModel : "gpt-4o-mini";
+      const d = await callOpenAI(system, turns, model, 300);
+      raw = d.text || "";
+    } else {
+      if (!env.ai.anthropicKey) return FOLLOWUP_SKIP;
+      const model = settings.aiModel.startsWith("claude") ? settings.aiModel : "claude-sonnet-5";
+      const d = await callClaude(system, turns, model, 300);
+      raw = d.text || "";
+    }
+
+    if (!raw.trim() || raw.includes(FOLLOWUP_SKIP)) return FOLLOWUP_SKIP;
+    return sanitizeReply(raw, settings);
+  } catch (err: any) {
+    console.error("[followup] generation failed:", err.message);
+    return FOLLOWUP_SKIP;
+  }
+}
+
 /** Classify a conversation for lead management. */
 export async function classifyConversation(
   conversationId: Types.ObjectId,

@@ -12,6 +12,7 @@ import { requireAuth } from "./middleware/auth";
 import { initRealtime } from "./realtime";
 import { startScheduler } from "./services/broadcast";
 import { startWorkflowScheduler } from "./services/workflows";
+import { startFollowUpScheduler } from "./services/followups";
 import { startHealthSync } from "./services/whatsapp";
 import { runMigrations } from "./models";
 import { seedNumberFromEnv } from "./routes/auth";
@@ -55,6 +56,7 @@ async function main() {
   await seedRecommendedSetup();
   startScheduler();
   startWorkflowScheduler();
+  startFollowUpScheduler();
   startHealthSync();
 
   server.listen(env.port, () => {

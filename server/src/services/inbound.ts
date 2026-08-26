@@ -11,6 +11,7 @@ import { decide } from "./ai";
 import { AiAction } from "../models";
 import { runAction } from "./actions";
 import { syncCustomer } from "./customer";
+import { scheduleFollowUps, cancelFollowUps } from "./followups";
 import { emit } from "../realtime";
 import {
   canSendFreeform,
@@ -158,6 +159,9 @@ export async function handleInboundMessage(
   conversation.unreadCount += 1;
   conversation.lastMessageAt = new Date();
   conversation.lastInboundAt = new Date(); // opens/refreshes the 24-hour window
+
+  // They came back — stop any nudges we had queued for them.
+  await cancelFollowUps(conversation._id).catch(() => {});
   conversation.lastMessagePreview = text.slice(0, 120);
   await conversation.save();
 
@@ -551,6 +555,9 @@ export async function handleInboundMessage(
     message: outMsg.toObject(),
     conversation: conversation.toObject(),
   });
+
+  // The ball is in their court now — queue the nudges in case it stays there.
+  await scheduleFollowUps(conversation).catch(() => {});
 }
 
 /** Handle delivery status callbacks and fan them out to broadcasts/workflows. */

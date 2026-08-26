@@ -150,6 +150,42 @@ export interface ActionRun {
   createdAt: string;
 }
 
+export interface FollowUpStep {
+  afterMinutes: number;
+  mode: "ai" | "text" | "template";
+  text?: string;
+  templateName?: string;
+  templateLanguage?: string;
+  templateParams?: string[];
+  note?: string;
+}
+
+export interface FollowUpSequence {
+  _id: string;
+  name: string;
+  enabled: boolean;
+  numbers: { _id: string; label: string }[] | string[];
+  audience: "any" | "lead" | "customer";
+  steps: FollowUpStep[];
+  stopLabels: string[];
+  skipWhenAiOff: boolean;
+  quietHoursStart: string;
+  quietHoursEnd: string;
+  timezone: string;
+  stats: { scheduled: number; sent: number; skipped: number; replied: number };
+}
+
+export interface FollowUpJob {
+  _id: string;
+  contact?: { name: string; waId: string; masked?: boolean };
+  stepIndex: number;
+  runAt: string;
+  status: "pending" | "sent" | "cancelled" | "skipped" | "failed";
+  reason?: string;
+  sentText?: string;
+  createdAt: string;
+}
+
 export interface Lead {
   _id: string;
   contact: Contact;

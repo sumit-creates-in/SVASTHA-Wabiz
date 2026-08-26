@@ -5,9 +5,15 @@
  * afterwards in the dashboard and it will never be overwritten. Bumping
  * SEED_VERSION ships a new revision to installs that haven't had it yet.
  */
-import { AiAction, KnowledgeDoc, Settings, getSettings } from "./models";
+import {
+  AiAction,
+  FollowUpSequence,
+  KnowledgeDoc,
+  Settings,
+  getSettings
+} from "./models";
 
-const SEED_VERSION = 2;
+const SEED_VERSION = 3;
 
 // ── The Priya system prompt ─────────────────────────────
 export const SVASTHA_SYSTEM_PROMPT = `Your name is Priya. You are part of Svastha's team on WhatsApp.
@@ -268,6 +274,39 @@ They'll call you back within 24 hours, between 10am and 7pm. You can also track 
   handoffAfter: false
 };
 
+// ── Default follow-up sequence ──────────────────────────
+// A lead who stops replying isn't lost, just un-nudged. Two free-form nudges
+// inside the 24-hour window, then one template once it closes.
+const LEAD_FOLLOWUP = {
+  name: "Lead follow-up — no reply",
+  enabled: true,
+  audience: "lead" as const,
+  steps: [
+    {
+      afterMinutes: 120,
+      mode: "ai" as const,
+      note: "2 hours quiet — gentle nudge picking up where the chat stopped"
+    },
+    {
+      afterMinutes: 1200,
+      mode: "ai" as const,
+      note: "20 hours quiet — last free-form message before the 24h window closes"
+    },
+    {
+      afterMinutes: 1560,
+      mode: "template" as const,
+      templateLanguage: "en",
+      templateParams: ["{{name}}"],
+      note: "26 hours — window has closed, needs an approved template. Set templateName to activate."
+    }
+  ],
+  stopLabels: ["Call-Booked", "opted-out", "needs-human", "at-risk"],
+  skipWhenAiOff: true,
+  quietHoursStart: "21:00",
+  quietHoursEnd: "09:00",
+  timezone: "Asia/Kolkata"
+};
+
 /** Install the recommended setup once. Safe to call on every boot. */
 export async function seedRecommendedSetup(): Promise<void> {
   const settings = await getSettings();
@@ -322,6 +361,14 @@ export async function seedRecommendedSetup(): Promise<void> {
       await existing.save();
       console.log(`[seed] refreshed unconfigured action "${spec.displayName}"`);
     }
+  }
+
+  // 4. Follow-up sequence
+  if (!(await FollowUpSequence.findOne({ name: LEAD_FOLLOWUP.name }))) {
+    await FollowUpSequence.create(LEAD_FOLLOWUP);
+    console.log(
+      "[seed] created the lead follow-up sequence (2h + 20h nudges live; 26h template step needs a template)"
+    );
   }
 }
 

@@ -17,6 +17,8 @@ import {
   ActionRun,
   Lead,
   Ticket,
+  FollowUpSequence,
+  FollowUpJob,
   getSettings
 } from "../models";
 import {
@@ -685,6 +687,85 @@ apiRouter.get("/action-runs", requirePermission("actions.view"), async (req, res
 
 apiRouter.post("/action-runs/:id/retry", requirePermission("actions.manage"), async (req, res) => {
   res.json(await retryRun(req.params.id));
+});
+
+// ════════════════════════════════════════════════════════
+// FOLLOW-UPS
+// ════════════════════════════════════════════════════════
+apiRouter.get("/followups", requirePermission("actions.view"), async (_req, res) => {
+  const sequences = await FollowUpSequence.find()
+    .sort({ createdAt: 1 })
+    .populate("numbers", "label displayPhoneNumber")
+    .lean();
+  res.json(sequences);
+});
+
+apiRouter.post("/followups", requirePermission("actions.manage"), async (req, res) => {
+  const b = req.body || {};
+  if (!b.name) {
+    res.status(400).json({ error: "name is required" });
+    return;
+  }
+  res.json(await FollowUpSequence.create(b));
+});
+
+apiRouter.patch("/followups/:id", requirePermission("actions.manage"), async (req, res) => {
+  const allowed: Record<string, unknown> = {};
+  for (const k of [
+    "name",
+    "enabled",
+    "numbers",
+    "audience",
+    "steps",
+    "stopLabels",
+    "skipWhenAiOff",
+    "quietHoursStart",
+    "quietHoursEnd",
+    "timezone",
+  ] as const) {
+    if (k in (req.body || {})) allowed[k] = req.body[k];
+  }
+  res.json(
+    await FollowUpSequence.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true }).lean(),
+  );
+});
+
+apiRouter.delete("/followups/:id", requirePermission("actions.manage"), async (req, res) => {
+  await FollowUpSequence.deleteOne({ _id: req.params.id });
+  await FollowUpJob.deleteMany({ sequence: req.params.id, status: "pending" });
+  res.json({ ok: true });
+});
+
+/** Queue and history, so you can see who is being chased and who was skipped. */
+apiRouter.get("/followup-jobs", requirePermission("actions.view"), async (req: AuthedRequest, res) => {
+  const viewer = req.viewer!;
+  const q: Record<string, unknown> = {};
+  if (req.query.status) q.status = req.query.status;
+  if (viewer.allowedNumbers.length) q.number = { $in: viewer.allowedNumbers };
+  const items = await FollowUpJob.find(q)
+    .sort({ runAt: req.query.status === "pending" ? 1 : -1 })
+    .limit(150)
+    .populate("contact", "name waId")
+    .lean();
+  res.json(items.map((j) => ({ ...j, contact: maskContact(j.contact as any, viewer) })));
+});
+
+/** Force a queued nudge to run now — useful when testing. */
+apiRouter.post("/followup-jobs/:id/run-now", requirePermission("actions.manage"), async (req, res) => {
+  const job = await FollowUpJob.findByIdAndUpdate(
+    req.params.id,
+    { $set: { runAt: new Date(Date.now() - 1000) } },
+    { new: true },
+  ).lean();
+  res.json(job);
+});
+
+apiRouter.post("/followup-jobs/:id/cancel", requirePermission("actions.manage"), async (req, res) => {
+  await FollowUpJob.updateOne(
+    { _id: req.params.id, status: "pending" },
+    { $set: { status: "cancelled", reason: "Cancelled manually" } },
+  );
+  res.json({ ok: true });
 });
 
 // ════════════════════════════════════════════════════════

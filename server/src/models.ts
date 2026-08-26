@@ -600,6 +600,110 @@ const ticketSchema = new Schema<ITicket>(
 );
 export const Ticket = model<ITicket>("Ticket", ticketSchema);
 
+// ════════════════════════════════════════════════════════
+// FOLLOW-UPS — chase leads who go quiet.
+// A lead who stops replying is not a lost lead, just an un-nudged one. Inside
+// the 24-hour window a nudge is free-form and free; outside it, only an
+// approved template can be used.
+// ════════════════════════════════════════════════════════
+export interface IFollowUpStep {
+  afterMinutes: number; // measured from the customer's last inbound message
+  mode: "ai" | "text" | "template";
+  text?: string;
+  templateName?: string;
+  templateLanguage?: string;
+  templateParams?: string[];
+  note?: string;
+}
+
+export interface IFollowUpSequence extends Document {
+  name: string;
+  enabled: boolean;
+  numbers: Types.ObjectId[]; // empty = all
+  audience: "any" | "lead" | "customer";
+  steps: IFollowUpStep[];
+  /** Chat labels that mean "job done, stop chasing". */
+  stopLabels: string[];
+  /** Don't chase if the AI is off or a human has taken the chat. */
+  skipWhenAiOff: boolean;
+  quietHoursStart: string; // "21:00"
+  quietHoursEnd: string; // "09:00"
+  timezone: string;
+  stats: { scheduled: number; sent: number; skipped: number; replied: number };
+}
+
+const followUpStepSchema = new Schema<IFollowUpStep>(
+  {
+    afterMinutes: { type: Number, required: true },
+    mode: { type: String, enum: ["ai", "text", "template"], default: "ai" },
+    text: String,
+    templateName: String,
+    templateLanguage: { type: String, default: "en" },
+    templateParams: { type: [String], default: [] },
+    note: String
+  },
+  { _id: false }
+);
+
+const followUpSequenceSchema = new Schema<IFollowUpSequence>(
+  {
+    name: { type: String, required: true },
+    enabled: { type: Boolean, default: true },
+    numbers: { type: [Schema.Types.ObjectId], ref: "WabaNumber", default: [] },
+    audience: { type: String, enum: ["any", "lead", "customer"], default: "lead" },
+    steps: { type: [followUpStepSchema], default: [] },
+    stopLabels: { type: [String], default: ["Call-Booked", "opted-out", "needs-human"] },
+    skipWhenAiOff: { type: Boolean, default: true },
+    quietHoursStart: { type: String, default: "21:00" },
+    quietHoursEnd: { type: String, default: "09:00" },
+    timezone: { type: String, default: "Asia/Kolkata" },
+    stats: {
+      scheduled: { type: Number, default: 0 },
+      sent: { type: Number, default: 0 },
+      skipped: { type: Number, default: 0 },
+      replied: { type: Number, default: 0 }
+    }
+  },
+  { timestamps: true }
+);
+export const FollowUpSequence = model<IFollowUpSequence>(
+  "FollowUpSequence",
+  followUpSequenceSchema
+);
+
+export interface IFollowUpJob extends Document {
+  sequence: Types.ObjectId;
+  conversation: Types.ObjectId;
+  contact: Types.ObjectId;
+  number: Types.ObjectId;
+  stepIndex: number;
+  runAt: Date;
+  status: "pending" | "sent" | "cancelled" | "skipped" | "failed";
+  reason?: string;
+  sentText?: string;
+  createdAt: Date;
+}
+const followUpJobSchema = new Schema<IFollowUpJob>(
+  {
+    sequence: { type: Schema.Types.ObjectId, ref: "FollowUpSequence", required: true },
+    conversation: { type: Schema.Types.ObjectId, ref: "Conversation", required: true, index: true },
+    contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true },
+    number: { type: Schema.Types.ObjectId, ref: "WabaNumber", required: true },
+    stepIndex: { type: Number, required: true },
+    runAt: { type: Date, required: true, index: true },
+    status: { type: String, default: "pending", index: true },
+    reason: String,
+    sentText: String
+  },
+  { timestamps: true }
+);
+// One job per conversation per step — protects against double-scheduling.
+followUpJobSchema.index(
+  { conversation: 1, sequence: 1, stepIndex: 1 },
+  { unique: true, partialFilterExpression: { status: "pending" } }
+);
+export const FollowUpJob = model<IFollowUpJob>("FollowUpJob", followUpJobSchema);
+
 // ── Quality snapshots (trend tracking per number) ───────
 export interface IQualitySnapshot extends Document {
   number: Types.ObjectId;
