@@ -1,4 +1,11 @@
-import { Contact, Conversation, Message, WabaNumber, IWabaNumber, getSettings } from "../models";
+import {
+  Contact,
+  Conversation,
+  Message,
+  WabaNumber,
+  IWabaNumber,
+  getSettings,
+} from "../models";
 import * as wa from "./whatsapp";
 import { decide } from "./ai";
 import { AiAction } from "../models";
@@ -15,17 +22,22 @@ import {
   recordNumberSend,
   reviewReply,
   detectFrustration,
-  explainErrorCode
+  explainErrorCode,
 } from "./compliance";
 
-function withinBusinessHours(s: { start: string; end: string; timezone: string; enabled: boolean }): boolean {
+function withinBusinessHours(s: {
+  start: string;
+  end: string;
+  timezone: string;
+  enabled: boolean;
+}): boolean {
   if (!s.enabled) return true;
   try {
     const now = new Date().toLocaleTimeString("en-GB", {
       hour12: false,
       timeZone: s.timezone,
       hour: "2-digit",
-      minute: "2-digit"
+      minute: "2-digit",
     });
     return now >= s.start && now <= s.end;
   } catch {
@@ -40,12 +52,22 @@ function extract(msg: any): { type: string; text: string; mediaId?: string } {
   if (type === "interactive")
     return {
       type,
-      text: msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || ""
+      text:
+        msg.interactive?.button_reply?.title ||
+        msg.interactive?.list_reply?.title ||
+        "",
     };
   if (["image", "video", "audio", "document", "sticker"].includes(type))
-    return { type, text: msg[type]?.caption || `[${type}]`, mediaId: msg[type]?.id };
+    return {
+      type,
+      text: msg[type]?.caption || `[${type}]`,
+      mediaId: msg[type]?.id,
+    };
   if (type === "location")
-    return { type, text: `[location] ${msg.location?.latitude},${msg.location?.longitude}` };
+    return {
+      type,
+      text: `[location] ${msg.location?.latitude},${msg.location?.longitude}`,
+    };
   return { type, text: `[${type}]` };
 }
 
@@ -53,23 +75,35 @@ function extract(msg: any): { type: string; text: string; mediaId?: string } {
 export async function handleInboundMessage(
   msg: any,
   number: IWabaNumber,
-  contactProfile?: any
+  contactProfile?: any,
 ): Promise<void> {
   const waId: string = msg.from;
   const profileName: string = contactProfile?.profile?.name || "";
 
-  if (msg.id && (await Message.exists({ waMessageId: msg.id }))) return; // Meta retries
+  console.log(
+    `[ai-debug] 📨 inbound from ${waId} on ${number.displayPhoneNumber} (enabled=${number.enabled}, aiEnabled=${number.aiEnabled})`,
+  );
+
+  if (msg.id && (await Message.exists({ waMessageId: msg.id }))) {
+    console.log(`[ai-debug] duplicate msg ${msg.id} — skipping`);
+    return; // Meta retries
+  }
 
   const contact = await Contact.findOneAndUpdate(
     { waId },
-    { $set: { lastSeenAt: new Date(), ...(profileName ? { name: profileName } : {}) } },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    {
+      $set: {
+        lastSeenAt: new Date(),
+        ...(profileName ? { name: profileName } : {}),
+      },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
   );
 
   const conversation = await Conversation.findOneAndUpdate(
     { contact: contact._id, number: number._id },
     { $setOnInsert: { aiEnabled: number.aiEnabled }, $set: { status: "open" } },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, new: true, setDefaultsOnInsert: true },
   );
 
   const { type, text, mediaId } = extract(msg);
@@ -84,7 +118,7 @@ export async function handleInboundMessage(
     text,
     mediaId,
     waMessageId: msg.id,
-    status: "received"
+    status: "received",
   });
 
   conversation.unreadCount += 1;
@@ -96,7 +130,7 @@ export async function handleInboundMessage(
   emit("message:new", {
     message: saved.toObject(),
     contact: contact.toObject(),
-    conversation: conversation.toObject()
+    conversation: conversation.toObject(),
   });
   if (msg.id) wa.markRead(number, msg.id).catch(() => {});
 
@@ -109,7 +143,9 @@ export async function handleInboundMessage(
     await contact.save();
     conversation.aiEnabled = false;
     conversation.botPaused = true;
-    conversation.labels = Array.from(new Set([...conversation.labels, "opted-out"]));
+    conversation.labels = Array.from(
+      new Set([...conversation.labels, "opted-out"]),
+    );
     await conversation.save();
     if (settings.optOutReply) {
       const r = await wa.sendText(number, waId, settings.optOutReply);
@@ -123,7 +159,7 @@ export async function handleInboundMessage(
         text: settings.optOutReply,
         waMessageId: r.waMessageId,
         status: r.error ? "failed" : "sent",
-        error: r.error
+        error: r.error,
       });
     }
     emit("conversation:update", conversation.toObject());
@@ -142,22 +178,56 @@ export async function handleInboundMessage(
   if (contact.optedOut) return;
 
   // ── 2. AI eligibility ─────────────────────────────────
-  if (!settings.aiGlobalEnabled || !number.aiEnabled || !conversation.aiEnabled) return;
-  if (aiTemporarilyPaused(conversation)) return;
-  if (!["text", "button", "interactive"].includes(type)) return;
+  if (!settings.aiGlobalEnabled) {
+    console.log(`[ai-debug] ❌ blocked: aiGlobalEnabled is OFF in Settings`);
+    return;
+  }
+  if (!number.aiEnabled) {
+    console.log(
+      `[ai-debug] ❌ blocked: aiEnabled is OFF for number ${number.displayPhoneNumber}`,
+    );
+    return;
+  }
+  if (!conversation.aiEnabled) {
+    console.log(
+      `[ai-debug] ❌ blocked: aiEnabled is OFF for conversation ${conversation._id} (contact ${waId})`,
+    );
+    return;
+  }
+  if (aiTemporarilyPaused(conversation)) {
+    console.log(
+      `[ai-debug] ❌ blocked: AI temporarily paused (human takeover) until ${conversation.aiPausedUntil} for ${waId}`,
+    );
+    return;
+  }
+  if (!["text", "button", "interactive"].includes(type)) {
+    console.log(
+      `[ai-debug] ❌ blocked: message type "${type}" is not handled by AI`,
+    );
+    return;
+  }
+  console.log(
+    `[ai-debug] ✅ AI eligible for ${waId} on ${number.displayPhoneNumber}`,
+  );
 
   // ── 3. Human handoff: explicit request, or a frustrated customer ──
   // Frustration is the leading indicator of a block or report, which is what
   // actually drives the number's quality rating down. Stop the bot immediately.
   const lower = text.toLowerCase();
-  const askedForHuman = settings.handoffKeywords.some((k) => k && lower.includes(k.toLowerCase()));
+  const askedForHuman = settings.handoffKeywords.some(
+    (k) => k && lower.includes(k.toLowerCase()),
+  );
   const frustrated = settings.frustrationAutoHandoff && detectFrustration(text);
 
   if (askedForHuman || frustrated) {
     conversation.aiEnabled = false;
     conversation.status = "pending";
     conversation.labels = Array.from(
-      new Set([...conversation.labels, "needs-human", ...(frustrated ? ["at-risk"] : [])])
+      new Set([
+        ...conversation.labels,
+        "needs-human",
+        ...(frustrated ? ["at-risk"] : []),
+      ]),
     );
     await conversation.save();
     if (frustrated && !askedForHuman) {
@@ -169,12 +239,13 @@ export async function handleInboundMessage(
         author: "system",
         type: "text",
         text: "AI paused — customer sounds unhappy. Reply personally to avoid a block or report.",
-        status: "sent"
+        status: "sent",
       });
     }
-    const ack = frustrated && !askedForHuman
-      ? "I'm sorry about that — I'm passing this to a colleague who will reply here personally."
-      : "Sure — a member of our team will reply to you here shortly.";
+    const ack =
+      frustrated && !askedForHuman
+        ? "I'm sorry about that — I'm passing this to a colleague who will reply here personally."
+        : "Sure — a member of our team will reply to you here shortly.";
     const r = await wa.sendText(number, waId, ack);
     await Message.create({
       conversation: conversation._id,
@@ -186,26 +257,36 @@ export async function handleInboundMessage(
       text: ack,
       waMessageId: r.waMessageId,
       status: r.error ? "failed" : "sent",
-      error: r.error
+      error: r.error,
     });
     emit("conversation:update", conversation.toObject());
-    emit("message:new", { message: { text: ack }, conversation: conversation.toObject() });
+    emit("message:new", {
+      message: { text: ack },
+      conversation: conversation.toObject(),
+    });
     return;
   }
 
   // ── 4. Policy gate: 24h window, opt-out, quality ──────
   const gate = canSendFreeform(conversation, contact, number, settings);
   if (!gate.allowed) {
-    console.log(`[compliance] AI reply blocked: ${gate.reason}`);
+    console.log(
+      `[ai-debug] ❌ blocked by compliance gate for ${waId}: ${gate.reason}`,
+    );
+    console.log(
+      `[ai-debug]   lastInboundAt=${conversation.lastInboundAt}, optedOut=${contact.optedOut}, numberQuality=${number.qualityRating}`,
+    );
     return;
   }
+  console.log(`[ai-debug] ✅ compliance gate passed for ${waId}`);
 
   // ── 5. Rate limit ─────────────────────────────────────
   const quota = await consumeAiQuota(conversation, settings);
   if (!quota.allowed) {
-    console.log(`[compliance] ${quota.reason}`);
+    console.log(`[ai-debug] ❌ blocked: ${quota.reason} for ${waId}`);
     return;
   }
+  console.log(`[ai-debug] ✅ quota OK for ${waId}`);
 
   // ── 5b. Who is this? Lead or existing customer ────────
   // The answer changes how the AI behaves and which actions it can use.
@@ -216,8 +297,14 @@ export async function handleInboundMessage(
   }
 
   // ── 6. Off-hours notice (once, alongside the AI reply) ─
-  if (!withinBusinessHours(settings.businessHours) && settings.outsideHoursMessage) {
-    const dup = await isDuplicateOfLast(conversation._id, settings.outsideHoursMessage);
+  if (
+    !withinBusinessHours(settings.businessHours) &&
+    settings.outsideHoursMessage
+  ) {
+    const dup = await isDuplicateOfLast(
+      conversation._id,
+      settings.outsideHoursMessage,
+    );
     if (!dup) {
       const r = await wa.sendText(number, waId, settings.outsideHoursMessage);
       await Message.create({
@@ -229,30 +316,45 @@ export async function handleInboundMessage(
         type: "text",
         text: settings.outsideHoursMessage,
         waMessageId: r.waMessageId,
-        status: r.error ? "failed" : "sent"
+        status: r.error ? "failed" : "sent",
       });
     }
   }
 
   // ── 7. Decide: reply in words, or perform an action ───
+  console.log(`[ai-debug] 🤖 calling AI decide() for ${waId}`);
   const decision = await decide(conversation._id as any, number, contact);
+  console.log(
+    `[ai-debug] 🤖 AI decision for ${waId}: kind=${decision.kind}${decision.text ? ` text="${decision.text?.slice(0, 80)}..."` : ""}${decision.actionName ? ` action=${decision.actionName}` : ""}`,
+  );
   if (decision.kind === "none") return;
 
   // ── 7a. The AI wants to do something (book a call, raise a ticket) ──
   if (decision.kind === "action" && decision.actionName) {
-    const action = await AiAction.findOne({ name: decision.actionName, enabled: true });
+    const action = await AiAction.findOne({
+      name: decision.actionName,
+      enabled: true,
+    });
     if (!action) {
-      console.warn(`[actions] model asked for unknown action "${decision.actionName}"`);
+      console.warn(
+        `[actions] model asked for unknown action "${decision.actionName}"`,
+      );
       return;
     }
 
-    const result = await runAction(action, decision.args || {}, { contact, conversation, number });
+    const result = await runAction(action, decision.args || {}, {
+      contact,
+      conversation,
+      number,
+    });
 
     if (!result.ok) {
       // Never tell the customer it worked when it didn't — hand to a human.
       conversation.aiEnabled = false;
       conversation.status = "pending";
-      conversation.labels = Array.from(new Set([...conversation.labels, "needs-human", "action-failed"]));
+      conversation.labels = Array.from(
+        new Set([...conversation.labels, "needs-human", "action-failed"]),
+      );
       await conversation.save();
       await Message.create({
         conversation: conversation._id,
@@ -262,7 +364,7 @@ export async function handleInboundMessage(
         author: "system",
         type: "text",
         text: `Action "${action.displayName}" failed: ${result.error}. Customer was NOT told it succeeded — please follow up.`,
-        status: "sent"
+        status: "sent",
       });
       const holding = settings.escalationMessage;
       if (holding) {
@@ -276,14 +378,15 @@ export async function handleInboundMessage(
           type: "text",
           text: holding,
           waMessageId: r.waMessageId,
-          status: r.error ? "failed" : "sent"
+          status: r.error ? "failed" : "sent",
         });
       }
       emit("conversation:update", conversation.toObject());
       return;
     }
 
-    const confirmation = result.confirmation || "All done — our team will be in touch shortly.";
+    const confirmation =
+      result.confirmation || "All done — our team will be in touch shortly.";
     const sendRes = await wa.sendText(number, waId, confirmation);
     const confMsg = await Message.create({
       conversation: conversation._id,
@@ -295,7 +398,7 @@ export async function handleInboundMessage(
       text: confirmation,
       waMessageId: sendRes.waMessageId,
       status: sendRes.error ? "failed" : "sent",
-      error: sendRes.error
+      error: sendRes.error,
     });
     if (!sendRes.error) await recordNumberSend(number);
 
@@ -310,13 +413,16 @@ export async function handleInboundMessage(
         `Action "${action.displayName}" completed` +
         (result.ticketReference ? ` — ticket ${result.ticketReference}` : "") +
         `. Sent to ${action.webhookUrl.replace(/^https?:\/\//, "").split("/")[0]}.`,
-      status: "sent"
+      status: "sent",
     });
 
     conversation.lastMessageAt = new Date();
     conversation.lastMessagePreview = confirmation.slice(0, 120);
     await conversation.save();
-    emit("message:new", { message: confMsg.toObject(), conversation: conversation.toObject() });
+    emit("message:new", {
+      message: confMsg.toObject(),
+      conversation: conversation.toObject(),
+    });
     emit("conversation:update", conversation.toObject());
     return;
   }
@@ -330,7 +436,9 @@ export async function handleInboundMessage(
   if (review.action === "block") {
     console.log(`[compliance] AI reply blocked: ${review.reason}`);
     conversation.status = "pending";
-    conversation.labels = Array.from(new Set([...conversation.labels, "needs-human"]));
+    conversation.labels = Array.from(
+      new Set([...conversation.labels, "needs-human"]),
+    );
     await conversation.save();
     await Message.create({
       conversation: conversation._id,
@@ -340,7 +448,7 @@ export async function handleInboundMessage(
       author: "system",
       type: "text",
       text: `AI reply withheld — ${review.reason}. Draft: "${draft.slice(0, 200)}"`,
-      status: "sent"
+      status: "sent",
     });
     emit("conversation:update", conversation.toObject());
     return;
@@ -349,7 +457,9 @@ export async function handleInboundMessage(
   if (review.action === "escalate") {
     conversation.aiEnabled = false;
     conversation.status = "pending";
-    conversation.labels = Array.from(new Set([...conversation.labels, "needs-human"]));
+    conversation.labels = Array.from(
+      new Set([...conversation.labels, "needs-human"]),
+    );
     await conversation.save();
     const holding = settings.escalationMessage;
     if (holding && !(await isDuplicateOfLast(conversation._id, holding))) {
@@ -363,7 +473,7 @@ export async function handleInboundMessage(
         type: "text",
         text: holding,
         waMessageId: r.waMessageId,
-        status: r.error ? "failed" : "sent"
+        status: r.error ? "failed" : "sent",
       });
     }
     await Message.create({
@@ -374,7 +484,7 @@ export async function handleInboundMessage(
       author: "system",
       type: "text",
       text: "AI escalated — it wasn't confident enough to answer. Needs a human reply.",
-      status: "sent"
+      status: "sent",
     });
     emit("conversation:update", conversation.toObject());
     return;
@@ -397,13 +507,16 @@ export async function handleInboundMessage(
     text: replyText,
     waMessageId: result.waMessageId,
     status: result.error ? "failed" : "sent",
-    error: result.error
+    error: result.error,
   });
   if (!result.error) await recordNumberSend(number);
   conversation.lastMessageAt = new Date();
   conversation.lastMessagePreview = replyText.slice(0, 120);
   await conversation.save();
-  emit("message:new", { message: outMsg.toObject(), conversation: conversation.toObject() });
+  emit("message:new", {
+    message: outMsg.toObject(),
+    conversation: conversation.toObject(),
+  });
 }
 
 /** Handle delivery status callbacks and fan them out to broadcasts/workflows. */
@@ -414,7 +527,9 @@ export async function handleStatusUpdate(status: any): Promise<void> {
 
   const err = status.errors?.[0];
   const errCode: number | undefined = err?.code;
-  const errTitle = err ? explainErrorCode(errCode) || err.title || err.message : undefined;
+  const errTitle = err
+    ? explainErrorCode(errCode) || err.title || err.message
+    : undefined;
 
   const msg = await Message.findOneAndUpdate(
     { waMessageId },
@@ -422,12 +537,17 @@ export async function handleStatusUpdate(status: any): Promise<void> {
       $set: {
         status: newStatus,
         ...(errTitle ? { error: errTitle } : {}),
-        ...(errCode ? { errorCode: errCode } : {})
-      }
+        ...(errCode ? { errorCode: errCode } : {}),
+      },
     },
-    { new: true }
+    { new: true },
   );
-  if (msg) emit("message:status", { messageId: msg._id, waMessageId, status: newStatus });
+  if (msg)
+    emit("message:status", {
+      messageId: msg._id,
+      waMessageId,
+      status: newStatus,
+    });
 
   // 131049 means Meta is throttling your marketing to protect users — a direct
   // warning shot before a quality downgrade. Raise it rather than bury it.
@@ -435,7 +555,7 @@ export async function handleStatusUpdate(status: any): Promise<void> {
     const { Alert } = await import("../models");
     const recent = await Alert.findOne({
       title: "Marketing messages being withheld by Meta",
-      createdAt: { $gte: new Date(Date.now() - 6 * 3600 * 1000) }
+      createdAt: { $gte: new Date(Date.now() - 6 * 3600 * 1000) },
     });
     if (!recent) {
       await Alert.create({
@@ -443,13 +563,14 @@ export async function handleStatusUpdate(status: any): Promise<void> {
         title: "Marketing messages being withheld by Meta",
         detail:
           "Meta declined to deliver one or more marketing messages to protect the user experience. This usually means contacts are being messaged too often. Reduce broadcast frequency before your quality rating drops.",
-        number: msg?.number
+        number: msg?.number,
       });
       emit("alert:new", {});
     }
   }
 
-  const { BroadcastRecipient, Broadcast, WorkflowEvent, Workflow } = await import("../models");
+  const { BroadcastRecipient, Broadcast, WorkflowEvent, Workflow } =
+    await import("../models");
 
   const rec = await BroadcastRecipient.findOne({ waMessageId });
   if (rec && rec.status !== newStatus) {
@@ -459,7 +580,10 @@ export async function handleStatusUpdate(status: any): Promise<void> {
     if (newStatus === "failed") inc["stats.failed"] = 1;
     if (Object.keys(inc).length) {
       await Broadcast.updateOne({ _id: rec.broadcast }, { $inc: inc });
-      await BroadcastRecipient.updateOne({ _id: rec._id }, { $set: { status: newStatus } });
+      await BroadcastRecipient.updateOne(
+        { _id: rec._id },
+        { $set: { status: newStatus } },
+      );
     }
   }
 
@@ -471,13 +595,18 @@ export async function handleStatusUpdate(status: any): Promise<void> {
     if (newStatus === "failed") inc["stats.failed"] = 1;
     if (Object.keys(inc).length) {
       await Workflow.updateOne({ _id: evt.workflow }, { $inc: inc });
-      await WorkflowEvent.updateOne({ _id: evt._id }, { $set: { status: newStatus } });
+      await WorkflowEvent.updateOne(
+        { _id: evt._id },
+        { $set: { status: newStatus } },
+      );
       emit("workflow:update", { workflowId: evt.workflow });
     }
   }
 }
 
 /** Resolve which stored number a webhook payload belongs to. */
-export async function resolveNumber(phoneNumberId: string): Promise<IWabaNumber | null> {
+export async function resolveNumber(
+  phoneNumberId: string,
+): Promise<IWabaNumber | null> {
   return WabaNumber.findOne({ phoneNumberId });
 }
