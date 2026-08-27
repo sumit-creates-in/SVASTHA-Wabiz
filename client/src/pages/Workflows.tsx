@@ -10,6 +10,7 @@ import {
   RefreshCw,
   CheckCircle2,
   XCircle,
+  X,
   Pencil
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -790,12 +791,38 @@ function WorkflowDetail({
               value={workflow.secret || ""}
               placeholder="No secret — endpoint is public"
             />
-            {workflow.secret && (
+            {workflow.secret ? (
+              <>
+                <button
+                  className="btn-secondary shrink-0"
+                  title="Rotate secret"
+                  onClick={async () => {
+                    if (!confirm("Rotate the secret? Existing integrations will stop working until updated.")) return;
+                    await api(`/workflows/${workflow._id}/rotate-secret`, { method: "POST" });
+                    onChanged();
+                    onClose();
+                  }}
+                >
+                  <RefreshCw size={14} />
+                </button>
+                <button
+                  className="btn-secondary shrink-0 text-red-500 hover:text-red-600"
+                  title="Remove secret (make public)"
+                  onClick={async () => {
+                    if (!confirm("Remove secret? The endpoint will become public — anyone with the URL can trigger it.")) return;
+                    await api(`/workflows/${workflow._id}/rotate-secret`, { method: "POST", body: JSON.stringify({ clear: true }) });
+                    onChanged();
+                    onClose();
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              </>
+            ) : (
               <button
                 className="btn-secondary shrink-0"
-                title="Rotate secret"
+                title="Generate a secret"
                 onClick={async () => {
-                  if (!confirm("Rotate the secret? Existing integrations will stop working until updated.")) return;
                   await api(`/workflows/${workflow._id}/rotate-secret`, { method: "POST" });
                   onChanged();
                   onClose();

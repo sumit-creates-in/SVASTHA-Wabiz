@@ -19,7 +19,7 @@ import {
   Ticket,
   FollowUpSequence,
   FollowUpJob,
-  getSettings
+  getSettings,
 } from "../models";
 import {
   PERMISSIONS,
@@ -28,7 +28,7 @@ import {
   effectivePermissions,
   maskContact,
   maskPhonesInText,
-  Viewer
+  Viewer,
 } from "../permissions";
 import { requirePermission } from "../middleware/auth";
 import { runAction, retryRun } from "../services/actions";
@@ -41,7 +41,7 @@ import {
   canSendFreeform,
   insideWindow,
   windowRemainingMs,
-  recordNumberSend
+  recordNumberSend,
 } from "../services/compliance";
 import { emit } from "../realtime";
 import { env } from "../config/env";
@@ -59,22 +59,36 @@ apiRouter.get("/numbers", async (_req, res) => {
       ...n,
       tokenOverride: n.tokenOverride ? "set" : undefined,
       conversations: await Conversation.countDocuments({ number: n._id }),
-      unread: await Conversation.countDocuments({ number: n._id, unreadCount: { $gt: 0 } })
-    }))
+      unread: await Conversation.countDocuments({
+        number: n._id,
+        unreadCount: { $gt: 0 },
+      }),
+    })),
   );
   res.json(withCounts);
 });
 
 apiRouter.post("/numbers", async (req, res) => {
-  const { label, businessAccountId, phoneNumberId, tokenOverride, purpose, aiEnabled, systemPromptOverride } =
-    req.body || {};
+  const {
+    label,
+    businessAccountId,
+    phoneNumberId,
+    tokenOverride,
+    purpose,
+    aiEnabled,
+    systemPromptOverride,
+  } = req.body || {};
   if (!label || !businessAccountId || !phoneNumberId) {
-    res.status(400).json({ error: "label, businessAccountId and phoneNumberId are required" });
+    res.status(400).json({
+      error: "label, businessAccountId and phoneNumberId are required",
+    });
     return;
   }
   const exists = await WabaNumber.findOne({ phoneNumberId });
   if (exists) {
-    res.status(409).json({ error: "This phone number ID is already connected" });
+    res
+      .status(409)
+      .json({ error: "This phone number ID is already connected" });
     return;
   }
   const num = await WabaNumber.create({
@@ -84,7 +98,7 @@ apiRouter.post("/numbers", async (req, res) => {
     tokenOverride: tokenOverride || undefined,
     purpose: purpose || "mixed",
     aiEnabled: aiEnabled !== false,
-    systemPromptOverride
+    systemPromptOverride,
   });
   await wa.syncNumberHealth(num);
 
@@ -93,10 +107,15 @@ apiRouter.post("/numbers", async (req, res) => {
   let subscribed = false;
   let subscribeError: string | undefined;
   try {
-    subscribed = await wa.subscribeApp(num.businessAccountId, num.tokenOverride);
+    subscribed = await wa.subscribeApp(
+      num.businessAccountId,
+      num.tokenOverride,
+    );
   } catch (e: any) {
     subscribeError = e?.response?.data?.error?.message || e.message;
-    console.warn(`[numbers] auto-subscribe failed for ${num.businessAccountId}: ${subscribeError}`);
+    console.warn(
+      `[numbers] auto-subscribe failed for ${num.businessAccountId}: ${subscribeError}`,
+    );
   }
 
   res.json({ ...num.toObject(), subscribed, subscribeError });
@@ -111,11 +130,15 @@ apiRouter.patch("/numbers/:id", async (req, res) => {
     "aiEnabled",
     "systemPromptOverride",
     "tokenOverride",
-    "businessAccountId"
+    "businessAccountId",
   ] as const) {
     if (k in (req.body || {})) allowed[k] = req.body[k];
   }
-  const n = await WabaNumber.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true }).lean();
+  const n = await WabaNumber.findByIdAndUpdate(
+    req.params.id,
+    { $set: allowed },
+    { new: true },
+  ).lean();
   res.json(n);
 });
 
@@ -153,9 +176,17 @@ apiRouter.get("/numbers/subscription-status", async (_req, res) => {
     const cacheKey = `${n.businessAccountId}:${n.tokenOverride || "default"}`;
     if (!cache.has(cacheKey)) {
       try {
-        cache.set(cacheKey, { apps: await wa.getSubscribedApps(n.businessAccountId, n.tokenOverride) });
+        cache.set(cacheKey, {
+          apps: await wa.getSubscribedApps(
+            n.businessAccountId,
+            n.tokenOverride,
+          ),
+        });
       } catch (e: any) {
-        cache.set(cacheKey, { apps: [], error: e?.response?.data?.error?.message || e.message });
+        cache.set(cacheKey, {
+          apps: [],
+          error: e?.response?.data?.error?.message || e.message,
+        });
       }
     }
     const entry = cache.get(cacheKey)!;
@@ -165,7 +196,7 @@ apiRouter.get("/numbers/subscription-status", async (_req, res) => {
       apps: entry.apps,
       subscribed: !!appId && entry.apps.some((a) => a.id === appId),
       otherApps: entry.apps.filter((a) => a.id !== appId),
-      error: entry.error
+      error: entry.error,
     };
   }
   res.json(result);
@@ -180,10 +211,15 @@ apiRouter.post("/numbers/:id/subscribe", async (req, res) => {
   }
   try {
     const ok = await wa.subscribeApp(n.businessAccountId, n.tokenOverride);
-    const apps = await wa.getSubscribedApps(n.businessAccountId, n.tokenOverride);
+    const apps = await wa.getSubscribedApps(
+      n.businessAccountId,
+      n.tokenOverride,
+    );
     res.json({ ok, apps });
   } catch (e: any) {
-    res.status(502).json({ error: e?.response?.data?.error?.message || e.message });
+    res
+      .status(502)
+      .json({ error: e?.response?.data?.error?.message || e.message });
   }
 });
 
@@ -198,7 +234,9 @@ apiRouter.delete("/numbers/:id/subscribe", async (req, res) => {
     const ok = await wa.unsubscribeApp(n.businessAccountId, n.tokenOverride);
     res.json({ ok });
   } catch (e: any) {
-    res.status(502).json({ error: e?.response?.data?.error?.message || e.message });
+    res
+      .status(502)
+      .json({ error: e?.response?.data?.error?.message || e.message });
   }
 });
 
@@ -210,8 +248,13 @@ apiRouter.post("/numbers/discover", async (req, res) => {
     return;
   }
   try {
-    const list = await wa.fetchPhoneNumbers(businessAccountId, token || undefined);
-    const known = await WabaNumber.find({ businessAccountId }).select("phoneNumberId").lean();
+    const list = await wa.fetchPhoneNumbers(
+      businessAccountId,
+      token || undefined,
+    );
+    const known = await WabaNumber.find({ businessAccountId })
+      .select("phoneNumberId")
+      .lean();
     const knownIds = new Set(known.map((k) => k.phoneNumberId));
     res.json(
       list.map((p: any) => ({
@@ -221,11 +264,13 @@ apiRouter.post("/numbers/discover", async (req, res) => {
         qualityRating: p.quality_rating,
         messagingLimit: p.messaging_limit_tier,
         nameStatus: p.name_status,
-        alreadyAdded: knownIds.has(p.id)
-      }))
+        alreadyAdded: knownIds.has(p.id),
+      })),
     );
   } catch (e: any) {
-    res.status(502).json({ error: e?.response?.data?.error?.message || e.message });
+    res
+      .status(502)
+      .json({ error: e?.response?.data?.error?.message || e.message });
   }
 });
 
@@ -256,13 +301,16 @@ apiRouter.post("/alerts/:id/ack", async (req, res) => {
   const a = await Alert.findByIdAndUpdate(
     req.params.id,
     { $set: { acknowledged: true } },
-    { new: true }
+    { new: true },
   ).lean();
   res.json(a);
 });
 
 apiRouter.post("/alerts/ack-all", async (_req, res) => {
-  await Alert.updateMany({ acknowledged: false }, { $set: { acknowledged: true } });
+  await Alert.updateMany(
+    { acknowledged: false },
+    { $set: { acknowledged: true } },
+  );
   res.json({ ok: true });
 });
 
@@ -271,16 +319,18 @@ apiRouter.post("/alerts/ack-all", async (_req, res) => {
 // ════════════════════════════════════════════════════════
 apiRouter.get("/conversations", async (req: AuthedRequest, res) => {
   const viewer = req.viewer!;
-  const { status, number, label, assigned, unread, search } = req.query as Record<string, string>;
+  const { status, number, label, assigned, unread, search } =
+    req.query as Record<string, string>;
   const q: Record<string, unknown> = {};
   if (status) q.status = status;
   if (number) q.number = number;
 
   // Restrict to the numbers this user is allowed to see.
   if (viewer.allowedNumbers.length) {
-    q.number = number && viewer.allowedNumbers.includes(number)
-      ? number
-      : { $in: viewer.allowedNumbers };
+    q.number =
+      number && viewer.allowedNumbers.includes(number)
+        ? number
+        : { $in: viewer.allowedNumbers };
   }
   if (label) q.labels = label;
   if (assigned === "me") q.assignedTo = (req as AuthedRequest).userId;
@@ -289,7 +339,7 @@ apiRouter.get("/conversations", async (req: AuthedRequest, res) => {
 
   if (search) {
     const contacts = await Contact.find({
-      $or: [{ name: new RegExp(search, "i") }, { waId: new RegExp(search) }]
+      $or: [{ name: new RegExp(search, "i") }, { waId: new RegExp(search) }],
     })
       .select("_id")
       .lean();
@@ -312,37 +362,56 @@ apiRouter.get("/conversations", async (req: AuthedRequest, res) => {
         ? maskPhonesInText(c.lastMessagePreview)
         : c.lastMessagePreview,
       insideWindow: insideWindow(c as any),
-      windowRemainingMs: windowRemainingMs(c as any)
-    }))
+      windowRemainingMs: windowRemainingMs(c as any),
+    })),
   );
 });
 
-apiRouter.get("/conversations/:id/messages", async (req: AuthedRequest, res) => {
-  const viewer = req.viewer!;
-  const items = await Message.find({ conversation: req.params.id })
-    .sort({ createdAt: 1 })
-    .limit(500)
-    .lean();
-  await Conversation.updateOne({ _id: req.params.id }, { $set: { unreadCount: 0 } });
-  res.json(
-    viewer.maskPhoneNumbers
-      ? items.map((m) => ({ ...m, text: maskPhonesInText(m.text) }))
-      : items
-  );
-});
+apiRouter.get(
+  "/conversations/:id/messages",
+  async (req: AuthedRequest, res) => {
+    const viewer = req.viewer!;
+    const items = await Message.find({ conversation: req.params.id })
+      .sort({ createdAt: 1 })
+      .limit(500)
+      .lean();
+    await Conversation.updateOne(
+      { _id: req.params.id },
+      { $set: { unreadCount: 0 } },
+    );
+    res.json(
+      viewer.maskPhoneNumbers
+        ? items.map((m) => ({ ...m, text: maskPhonesInText(m.text) }))
+        : items,
+    );
+  },
+);
 
 apiRouter.patch("/conversations/:id", async (req, res) => {
   const allowed: Record<string, unknown> = {};
-  for (const k of ["aiEnabled", "botPaused", "status", "unreadCount", "labels", "note"] as const) {
+  for (const k of [
+    "aiEnabled",
+    "botPaused",
+    "status",
+    "unreadCount",
+    "labels",
+    "note",
+  ] as const) {
     if (k in (req.body || {})) allowed[k] = req.body[k];
   }
   if ("assignedTo" in (req.body || {})) {
     allowed.assignedTo = req.body.assignedTo || undefined;
   }
   if (req.body?.aiPauseMinutes) {
-    allowed.aiPausedUntil = new Date(Date.now() + Number(req.body.aiPauseMinutes) * 60000);
+    allowed.aiPausedUntil = new Date(
+      Date.now() + Number(req.body.aiPauseMinutes) * 60000,
+    );
   }
-  const conv = await Conversation.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true })
+  const conv = await Conversation.findByIdAndUpdate(
+    req.params.id,
+    { $set: allowed },
+    { new: true },
+  )
     .populate("contact")
     .populate("number", "label displayPhoneNumber verifiedName qualityRating")
     .populate("assignedTo", "name email")
@@ -352,56 +421,66 @@ apiRouter.patch("/conversations/:id", async (req, res) => {
 });
 
 /** Send a manual (human) reply — blocked outside the 24h window. */
-apiRouter.post("/conversations/:id/messages", async (req: AuthedRequest, res) => {
-  const conv = await Conversation.findById(req.params.id).populate("contact");
-  if (!conv) {
-    res.status(404).json({ error: "Conversation not found" });
-    return;
-  }
-  const text = String(req.body?.text || "").trim();
-  if (!text) {
-    res.status(400).json({ error: "Text required" });
-    return;
-  }
-  const contact: any = conv.contact;
-  const number = await WabaNumber.findById(conv.number);
-  const settings = await getSettings();
-  if (!number) {
-    res.status(400).json({ error: "Sending number not found" });
-    return;
-  }
-  const gate = canSendFreeform(conv, contact, number, settings);
-  if (!gate.allowed) {
-    res.status(409).json({ error: gate.reason, needsTemplate: !insideWindow(conv) });
-    return;
-  }
+apiRouter.post(
+  "/conversations/:id/messages",
+  async (req: AuthedRequest, res) => {
+    const conv = await Conversation.findById(req.params.id).populate("contact");
+    if (!conv) {
+      res.status(404).json({ error: "Conversation not found" });
+      return;
+    }
+    const text = String(req.body?.text || "").trim();
+    if (!text) {
+      res.status(400).json({ error: "Text required" });
+      return;
+    }
+    const contact: any = conv.contact;
+    const number = await WabaNumber.findById(conv.number);
+    const settings = await getSettings();
+    if (!number) {
+      res.status(400).json({ error: "Sending number not found" });
+      return;
+    }
+    const gate = canSendFreeform(conv, contact, number, settings);
+    if (!gate.allowed) {
+      res
+        .status(409)
+        .json({ error: gate.reason, needsTemplate: !insideWindow(conv) });
+      return;
+    }
 
-  const result = await wa.sendText(number, contact.waId, text);
-  const msg = await Message.create({
-    conversation: conv._id,
-    contact: contact._id,
-    number: number._id,
-    direction: "out",
-    author: "human",
-    type: "text",
-    text,
-    waMessageId: result.waMessageId,
-    status: result.error ? "failed" : "sent",
-    error: result.error,
-    sentBy: req.userId
-  });
-  if (!result.error) await recordNumberSend(number);
+    const result = await wa.sendText(number, contact.waId, text);
+    const msg = await Message.create({
+      conversation: conv._id,
+      contact: contact._id,
+      number: number._id,
+      direction: "out",
+      author: "human",
+      type: "text",
+      text,
+      waMessageId: result.waMessageId,
+      status: result.error ? "failed" : "sent",
+      error: result.error,
+      sentBy: req.userId,
+    });
+    if (!result.error) await recordNumberSend(number);
 
-  conv.lastMessageAt = new Date();
-  conv.lastMessagePreview = text.slice(0, 120);
-  // human took over → hold the AI back briefly so it doesn't talk over the agent
-  if (settings.pauseAiAfterHumanReplyMinutes > 0)
-    conv.aiPausedUntil = new Date(Date.now() + settings.pauseAiAfterHumanReplyMinutes * 60000);
-  await conv.save();
+    conv.lastMessageAt = new Date();
+    conv.lastMessagePreview = text.slice(0, 120);
+    // human took over → hold the AI back briefly so it doesn't talk over the agent
+    if (settings.pauseAiAfterHumanReplyMinutes > 0)
+      conv.aiPausedUntil = new Date(
+        Date.now() + settings.pauseAiAfterHumanReplyMinutes * 60000,
+      );
+    await conv.save();
 
-  emit("message:new", { message: msg.toObject(), conversation: conv.toObject() });
-  res.json(msg);
-});
+    emit("message:new", {
+      message: msg.toObject(),
+      conversation: conv.toObject(),
+    });
+    res.json(msg);
+  },
+);
 
 /** Send an approved template into a chat (the only option outside the 24h window). */
 apiRouter.post("/conversations/:id/template", async (req, res) => {
@@ -414,7 +493,9 @@ apiRouter.post("/conversations/:id/template", async (req, res) => {
   const contact: any = conv.contact;
   const number = await WabaNumber.findById(conv.number);
   if (!number || !templateName) {
-    res.status(400).json({ error: "templateName and a valid number are required" });
+    res
+      .status(400)
+      .json({ error: "templateName and a valid number are required" });
     return;
   }
   if (contact.optedOut) {
@@ -426,7 +507,7 @@ apiRouter.post("/conversations/:id/template", async (req, res) => {
     contact.waId,
     templateName,
     language || "en",
-    bodyParams || []
+    bodyParams || [],
   );
   if (result.error) {
     res.status(502).json({ error: result.error });
@@ -435,7 +516,7 @@ apiRouter.post("/conversations/:id/template", async (req, res) => {
   const tpl = await Template.findOne({ name: templateName }).lean();
   const preview = (tpl?.bodyText || templateName).replace(
     /\{\{(\d+)\}\}/g,
-    (_m: string, i: string) => (bodyParams || [])[Number(i) - 1] ?? `{{${i}}}`
+    (_m: string, i: string) => (bodyParams || [])[Number(i) - 1] ?? `{{${i}}}`,
   );
   const msg = await Message.create({
     conversation: conv._id,
@@ -446,12 +527,15 @@ apiRouter.post("/conversations/:id/template", async (req, res) => {
     type: "template",
     text: preview,
     waMessageId: result.waMessageId,
-    status: "sent"
+    status: "sent",
   });
   conv.lastMessageAt = new Date();
   conv.lastMessagePreview = preview.slice(0, 120);
   await conv.save();
-  emit("message:new", { message: msg.toObject(), conversation: conv.toObject() });
+  emit("message:new", {
+    message: msg.toObject(),
+    conversation: conv.toObject(),
+  });
   res.json(msg);
 });
 
@@ -497,26 +581,40 @@ apiRouter.get("/agents", async (_req, res) => {
 });
 
 /** The permission catalogue and role presets, for the team editor UI. */
-apiRouter.get("/team/permissions", requirePermission("team.manage"), (_req, res) => {
-  res.json({ permissions: PERMISSIONS, presets: ROLE_PRESETS });
-});
+apiRouter.get(
+  "/team/permissions",
+  requirePermission("team.manage"),
+  (_req, res) => {
+    res.json({ permissions: PERMISSIONS, presets: ROLE_PRESETS });
+  },
+);
 
 apiRouter.get("/team", requirePermission("team.manage"), async (_req, res) => {
   const users = await User.find()
-    .select("name email role active permissions allowedNumbers maskPhoneNumbers lastLoginAt createdAt")
+    .select(
+      "name email role active permissions allowedNumbers maskPhoneNumbers lastLoginAt createdAt",
+    )
     .populate("allowedNumbers", "label displayPhoneNumber")
     .sort({ createdAt: 1 })
     .lean();
   res.json(
     users.map((u) => ({
       ...u,
-      effectivePermissions: effectivePermissions(u as any)
-    }))
+      effectivePermissions: effectivePermissions(u as any),
+    })),
   );
 });
 
 apiRouter.post("/team", requirePermission("team.manage"), async (req, res) => {
-  const { email, password, name, role, permissions, allowedNumbers, maskPhoneNumbers } = req.body || {};
+  const {
+    email,
+    password,
+    name,
+    role,
+    permissions,
+    allowedNumbers,
+    maskPhoneNumbers,
+  } = req.body || {};
   if (!email || !password) {
     res.status(400).json({ error: "Email and password are required" });
     return;
@@ -530,7 +628,9 @@ apiRouter.post("/team", requirePermission("team.manage"), async (req, res) => {
     res.status(409).json({ error: "A user with this email already exists" });
     return;
   }
-  const chosenRole = ["admin", "manager", "agent"].includes(role) ? role : "agent";
+  const chosenRole = ["admin", "manager", "agent"].includes(role)
+    ? role
+    : "agent";
   const passwordHash = await bcrypt.hash(String(password), 10);
   const u = await User.create({
     email: normalised,
@@ -541,308 +641,475 @@ apiRouter.post("/team", requirePermission("team.manage"), async (req, res) => {
       ? permissions.filter((p: string) => ALL_PERMISSION_KEYS.includes(p))
       : ROLE_PRESETS[chosenRole] || ROLE_PRESETS.agent,
     allowedNumbers: Array.isArray(allowedNumbers) ? allowedNumbers : [],
-    maskPhoneNumbers: !!maskPhoneNumbers
+    maskPhoneNumbers: !!maskPhoneNumbers,
   });
   res.json({ id: u._id, email: u.email, name: u.name, role: u.role });
 });
 
-apiRouter.patch("/team/:id", requirePermission("team.manage"), async (req: AuthedRequest, res) => {
-  const target = await User.findById(req.params.id);
-  if (!target) {
-    res.status(404).json({ error: "User not found" });
-    return;
-  }
-
-  // Don't let the last admin lock everyone out.
-  const demoting = req.body?.role && req.body.role !== "admin" && target.role === "admin";
-  const deactivating = req.body?.active === false && target.active;
-  if (demoting || deactivating) {
-    const admins = await User.countDocuments({ role: "admin", active: true });
-    if (admins <= 1 && target.role === "admin") {
-      res.status(409).json({ error: "This is the last active admin — promote someone else first" });
+apiRouter.patch(
+  "/team/:id",
+  requirePermission("team.manage"),
+  async (req: AuthedRequest, res) => {
+    const target = await User.findById(req.params.id);
+    if (!target) {
+      res.status(404).json({ error: "User not found" });
       return;
     }
-  }
 
-  for (const k of ["name", "role", "active", "maskPhoneNumbers", "allowedNumbers"] as const) {
-    if (k in (req.body || {})) (target as any)[k] = req.body[k];
-  }
-  if (Array.isArray(req.body?.permissions)) {
-    target.permissions = req.body.permissions.filter((p: string) => ALL_PERMISSION_KEYS.includes(p));
-  }
-  if (req.body?.password) {
-    if (String(req.body.password).length < 6) {
-      res.status(400).json({ error: "Password must be at least 6 characters" });
+    // Don't let the last admin lock everyone out.
+    const demoting =
+      req.body?.role && req.body.role !== "admin" && target.role === "admin";
+    const deactivating = req.body?.active === false && target.active;
+    if (demoting || deactivating) {
+      const admins = await User.countDocuments({ role: "admin", active: true });
+      if (admins <= 1 && target.role === "admin") {
+        res.status(409).json({
+          error: "This is the last active admin — promote someone else first",
+        });
+        return;
+      }
+    }
+
+    for (const k of [
+      "name",
+      "role",
+      "active",
+      "maskPhoneNumbers",
+      "allowedNumbers",
+    ] as const) {
+      if (k in (req.body || {})) (target as any)[k] = req.body[k];
+    }
+    if (Array.isArray(req.body?.permissions)) {
+      target.permissions = req.body.permissions.filter((p: string) =>
+        ALL_PERMISSION_KEYS.includes(p),
+      );
+    }
+    if (req.body?.password) {
+      if (String(req.body.password).length < 6) {
+        res
+          .status(400)
+          .json({ error: "Password must be at least 6 characters" });
+        return;
+      }
+      target.passwordHash = await bcrypt.hash(String(req.body.password), 10);
+    }
+    await target.save();
+    res.json({ ok: true });
+  },
+);
+
+apiRouter.delete(
+  "/team/:id",
+  requirePermission("team.manage"),
+  async (req: AuthedRequest, res) => {
+    if (String(req.params.id) === req.userId) {
+      res.status(409).json({ error: "You can't delete your own account" });
       return;
     }
-    target.passwordHash = await bcrypt.hash(String(req.body.password), 10);
-  }
-  await target.save();
-  res.json({ ok: true });
-});
-
-apiRouter.delete("/team/:id", requirePermission("team.manage"), async (req: AuthedRequest, res) => {
-  if (String(req.params.id) === req.userId) {
-    res.status(409).json({ error: "You can't delete your own account" });
-    return;
-  }
-  const target = await User.findById(req.params.id);
-  if (target?.role === "admin") {
-    const admins = await User.countDocuments({ role: "admin", active: true });
-    if (admins <= 1) {
-      res.status(409).json({ error: "This is the last active admin" });
-      return;
+    const target = await User.findById(req.params.id);
+    if (target?.role === "admin") {
+      const admins = await User.countDocuments({ role: "admin", active: true });
+      if (admins <= 1) {
+        res.status(409).json({ error: "This is the last active admin" });
+        return;
+      }
     }
-  }
-  await User.deleteOne({ _id: req.params.id });
-  res.json({ ok: true });
-});
+    await User.deleteOne({ _id: req.params.id });
+    res.json({ ok: true });
+  },
+);
 
 // ════════════════════════════════════════════════════════
 // AI ACTIONS
 // ════════════════════════════════════════════════════════
-apiRouter.get("/actions", requirePermission("actions.view"), async (_req, res) => {
-  res.json(await AiAction.find().sort({ createdAt: 1 }).populate("numbers", "label displayPhoneNumber").lean());
-});
+apiRouter.get(
+  "/actions",
+  requirePermission("actions.view"),
+  async (_req, res) => {
+    res.json(
+      await AiAction.find()
+        .sort({ createdAt: 1 })
+        .populate("numbers", "label displayPhoneNumber")
+        .lean(),
+    );
+  },
+);
 
-apiRouter.post("/actions", requirePermission("actions.manage"), async (req, res) => {
-  const b = req.body || {};
-  if (!b.name || !b.description || !b.webhookUrl) {
-    res.status(400).json({ error: "name, description and webhookUrl are required" });
-    return;
-  }
-  const name = String(b.name).toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 60);
-  if (await AiAction.findOne({ name })) {
-    res.status(409).json({ error: "An action with this name already exists" });
-    return;
-  }
-  const a = await AiAction.create({ ...b, name, displayName: b.displayName || b.name });
-  res.json(a);
-});
+apiRouter.post(
+  "/actions",
+  requirePermission("actions.manage"),
+  async (req, res) => {
+    const b = req.body || {};
+    if (!b.name || !b.description || !b.webhookUrl) {
+      res
+        .status(400)
+        .json({ error: "name, description and webhookUrl are required" });
+      return;
+    }
+    const name = String(b.name)
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, "_")
+      .slice(0, 60);
+    if (await AiAction.findOne({ name })) {
+      res
+        .status(409)
+        .json({ error: "An action with this name already exists" });
+      return;
+    }
+    const a = await AiAction.create({
+      ...b,
+      name,
+      displayName: b.displayName || b.name,
+    });
+    res.json(a);
+  },
+);
 
-apiRouter.patch("/actions/:id", requirePermission("actions.manage"), async (req, res) => {
-  const allowed: Record<string, unknown> = {};
-  for (const k of [
-    "displayName",
-    "description",
-    "triggerExamples",
-    "audience",
-    "enabled",
-    "numbers",
-    "fields",
-    "webhookUrl",
-    "webhookMethod",
-    "webhookHeaders",
-    "webhookSecret",
-    "payloadTemplate",
-    "confirmationMessage",
-    "addTags",
-    "addLabels",
-    "createsLead",
-    "createsTicket",
-    "handoffAfter"
-  ] as const) {
-    if (k in (req.body || {})) allowed[k] = req.body[k];
-  }
-  res.json(await AiAction.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true }).lean());
-});
+apiRouter.patch(
+  "/actions/:id",
+  requirePermission("actions.manage"),
+  async (req, res) => {
+    const allowed: Record<string, unknown> = {};
+    for (const k of [
+      "displayName",
+      "description",
+      "triggerExamples",
+      "audience",
+      "enabled",
+      "numbers",
+      "fields",
+      "webhookUrl",
+      "webhookMethod",
+      "webhookHeaders",
+      "webhookSecret",
+      "payloadTemplate",
+      "confirmationMessage",
+      "addTags",
+      "addLabels",
+      "createsLead",
+      "createsTicket",
+      "handoffAfter",
+    ] as const) {
+      if (k in (req.body || {})) allowed[k] = req.body[k];
+    }
+    res.json(
+      await AiAction.findByIdAndUpdate(
+        req.params.id,
+        { $set: allowed },
+        { new: true },
+      ).lean(),
+    );
+  },
+);
 
-apiRouter.delete("/actions/:id", requirePermission("actions.manage"), async (req, res) => {
-  await AiAction.deleteOne({ _id: req.params.id });
-  res.json({ ok: true });
-});
+apiRouter.delete(
+  "/actions/:id",
+  requirePermission("actions.manage"),
+  async (req, res) => {
+    await AiAction.deleteOne({ _id: req.params.id });
+    res.json({ ok: true });
+  },
+);
 
 /** Fire an action against a sample payload so you can test the webhook. */
-apiRouter.post("/actions/:id/test", requirePermission("actions.manage"), async (req, res) => {
-  const action = await AiAction.findById(req.params.id);
-  if (!action) {
-    res.status(404).json({ error: "Action not found" });
-    return;
-  }
-  const conv = await Conversation.findOne().sort({ lastMessageAt: -1 }).populate("contact");
-  const number = await WabaNumber.findOne(action.numbers.length ? { _id: action.numbers[0] } : {});
-  if (!conv || !number) {
-    res.status(400).json({ error: "Need at least one conversation and one number to run a test" });
-    return;
-  }
-  const result = await runAction(action, req.body || {}, {
-    contact: conv.contact as any,
-    conversation: conv,
-    number
-  });
-  res.json(result);
-});
+apiRouter.post(
+  "/actions/:id/test",
+  requirePermission("actions.manage"),
+  async (req, res) => {
+    const action = await AiAction.findById(req.params.id);
+    if (!action) {
+      res.status(404).json({ error: "Action not found" });
+      return;
+    }
+    const conv = await Conversation.findOne()
+      .sort({ lastMessageAt: -1 })
+      .populate("contact");
+    const number = await WabaNumber.findOne(
+      action.numbers.length ? { _id: action.numbers[0] } : {},
+    );
+    if (!conv || !number) {
+      res.status(400).json({
+        error: "Need at least one conversation and one number to run a test",
+      });
+      return;
+    }
+    const result = await runAction(action, req.body || {}, {
+      contact: conv.contact as any,
+      conversation: conv,
+      number,
+    });
+    res.json(result);
+  },
+);
 
-apiRouter.get("/action-runs", requirePermission("actions.view"), async (req, res) => {
-  const q: Record<string, unknown> = {};
-  if (req.query.status) q.status = req.query.status;
-  if (req.query.action) q.action = req.query.action;
-  const items = await ActionRun.find(q)
-    .sort({ createdAt: -1 })
-    .limit(100)
-    .populate("contact", "name waId")
-    .lean();
-  res.json(items);
-});
+apiRouter.get(
+  "/action-runs",
+  requirePermission("actions.view"),
+  async (req, res) => {
+    const q: Record<string, unknown> = {};
+    if (req.query.status) q.status = req.query.status;
+    if (req.query.action) q.action = req.query.action;
+    const items = await ActionRun.find(q)
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .populate("contact", "name waId")
+      .lean();
+    res.json(items);
+  },
+);
 
-apiRouter.post("/action-runs/:id/retry", requirePermission("actions.manage"), async (req, res) => {
-  res.json(await retryRun(req.params.id));
-});
+apiRouter.post(
+  "/action-runs/:id/retry",
+  requirePermission("actions.manage"),
+  async (req, res) => {
+    res.json(await retryRun(req.params.id));
+  },
+);
 
 // ════════════════════════════════════════════════════════
 // FOLLOW-UPS
 // ════════════════════════════════════════════════════════
-apiRouter.get("/followups", requirePermission("actions.view"), async (_req, res) => {
-  const sequences = await FollowUpSequence.find()
-    .sort({ createdAt: 1 })
-    .populate("numbers", "label displayPhoneNumber")
-    .lean();
-  res.json(sequences);
-});
+apiRouter.get(
+  "/followups",
+  requirePermission("actions.view"),
+  async (_req, res) => {
+    const sequences = await FollowUpSequence.find()
+      .sort({ createdAt: 1 })
+      .populate("numbers", "label displayPhoneNumber")
+      .lean();
+    res.json(sequences);
+  },
+);
 
-apiRouter.post("/followups", requirePermission("actions.manage"), async (req, res) => {
-  const b = req.body || {};
-  if (!b.name) {
-    res.status(400).json({ error: "name is required" });
-    return;
-  }
-  res.json(await FollowUpSequence.create(b));
-});
+apiRouter.post(
+  "/followups",
+  requirePermission("actions.manage"),
+  async (req, res) => {
+    const b = req.body || {};
+    if (!b.name) {
+      res.status(400).json({ error: "name is required" });
+      return;
+    }
+    res.json(await FollowUpSequence.create(b));
+  },
+);
 
-apiRouter.patch("/followups/:id", requirePermission("actions.manage"), async (req, res) => {
-  const allowed: Record<string, unknown> = {};
-  for (const k of [
-    "name",
-    "enabled",
-    "numbers",
-    "audience",
-    "steps",
-    "stopLabels",
-    "skipWhenAiOff",
-    "quietHoursStart",
-    "quietHoursEnd",
-    "timezone",
-  ] as const) {
-    if (k in (req.body || {})) allowed[k] = req.body[k];
-  }
-  res.json(
-    await FollowUpSequence.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true }).lean(),
-  );
-});
+apiRouter.patch(
+  "/followups/:id",
+  requirePermission("actions.manage"),
+  async (req, res) => {
+    const allowed: Record<string, unknown> = {};
+    for (const k of [
+      "name",
+      "enabled",
+      "numbers",
+      "audience",
+      "steps",
+      "stopLabels",
+      "skipWhenAiOff",
+      "quietHoursStart",
+      "quietHoursEnd",
+      "timezone",
+    ] as const) {
+      if (k in (req.body || {})) allowed[k] = req.body[k];
+    }
+    res.json(
+      await FollowUpSequence.findByIdAndUpdate(
+        req.params.id,
+        { $set: allowed },
+        { new: true },
+      ).lean(),
+    );
+  },
+);
 
-apiRouter.delete("/followups/:id", requirePermission("actions.manage"), async (req, res) => {
-  await FollowUpSequence.deleteOne({ _id: req.params.id });
-  await FollowUpJob.deleteMany({ sequence: req.params.id, status: "pending" });
-  res.json({ ok: true });
-});
+apiRouter.delete(
+  "/followups/:id",
+  requirePermission("actions.manage"),
+  async (req, res) => {
+    await FollowUpSequence.deleteOne({ _id: req.params.id });
+    await FollowUpJob.deleteMany({
+      sequence: req.params.id,
+      status: "pending",
+    });
+    res.json({ ok: true });
+  },
+);
 
 /** Queue and history, so you can see who is being chased and who was skipped. */
-apiRouter.get("/followup-jobs", requirePermission("actions.view"), async (req: AuthedRequest, res) => {
-  const viewer = req.viewer!;
-  const q: Record<string, unknown> = {};
-  if (req.query.status) q.status = req.query.status;
-  if (viewer.allowedNumbers.length) q.number = { $in: viewer.allowedNumbers };
-  const items = await FollowUpJob.find(q)
-    .sort({ runAt: req.query.status === "pending" ? 1 : -1 })
-    .limit(150)
-    .populate("contact", "name waId")
-    .lean();
-  res.json(items.map((j) => ({ ...j, contact: maskContact(j.contact as any, viewer) })));
-});
+apiRouter.get(
+  "/followup-jobs",
+  requirePermission("actions.view"),
+  async (req: AuthedRequest, res) => {
+    const viewer = req.viewer!;
+    const q: Record<string, unknown> = {};
+    if (req.query.status) q.status = req.query.status;
+    if (viewer.allowedNumbers.length) q.number = { $in: viewer.allowedNumbers };
+    const items = await FollowUpJob.find(q)
+      .sort({ runAt: req.query.status === "pending" ? 1 : -1 })
+      .limit(150)
+      .populate("contact", "name waId")
+      .lean();
+    res.json(
+      items.map((j) => ({
+        ...j,
+        contact: maskContact(j.contact as any, viewer),
+      })),
+    );
+  },
+);
 
 /** Force a queued nudge to run now — useful when testing. */
-apiRouter.post("/followup-jobs/:id/run-now", requirePermission("actions.manage"), async (req, res) => {
-  const job = await FollowUpJob.findByIdAndUpdate(
-    req.params.id,
-    { $set: { runAt: new Date(Date.now() - 1000) } },
-    { new: true },
-  ).lean();
-  res.json(job);
-});
+apiRouter.post(
+  "/followup-jobs/:id/run-now",
+  requirePermission("actions.manage"),
+  async (req, res) => {
+    const job = await FollowUpJob.findByIdAndUpdate(
+      req.params.id,
+      { $set: { runAt: new Date(Date.now() - 1000) } },
+      { new: true },
+    ).lean();
+    res.json(job);
+  },
+);
 
-apiRouter.post("/followup-jobs/:id/cancel", requirePermission("actions.manage"), async (req, res) => {
-  await FollowUpJob.updateOne(
-    { _id: req.params.id, status: "pending" },
-    { $set: { status: "cancelled", reason: "Cancelled manually" } },
-  );
-  res.json({ ok: true });
-});
+apiRouter.post(
+  "/followup-jobs/:id/cancel",
+  requirePermission("actions.manage"),
+  async (req, res) => {
+    await FollowUpJob.updateOne(
+      { _id: req.params.id, status: "pending" },
+      { $set: { status: "cancelled", reason: "Cancelled manually" } },
+    );
+    res.json({ ok: true });
+  },
+);
 
 // ════════════════════════════════════════════════════════
 // LEADS
 // ════════════════════════════════════════════════════════
-apiRouter.get("/leads", requirePermission("leads.view"), async (req: AuthedRequest, res) => {
-  const viewer = req.viewer!;
-  const q: Record<string, unknown> = {};
-  if (req.query.status) q.status = req.query.status;
-  if (viewer.allowedNumbers.length) q.number = { $in: viewer.allowedNumbers };
-  const items = await Lead.find(q)
-    .sort({ createdAt: -1 })
-    .limit(300)
-    .populate("contact")
-    .populate("assignedTo", "name")
-    .populate("number", "label")
-    .lean();
-  res.json(items.map((l) => ({ ...l, contact: maskContact(l.contact as any, viewer) })));
-});
+apiRouter.get(
+  "/leads",
+  requirePermission("leads.view"),
+  async (req: AuthedRequest, res) => {
+    const viewer = req.viewer!;
+    const q: Record<string, unknown> = {};
+    if (req.query.status) q.status = req.query.status;
+    if (viewer.allowedNumbers.length) q.number = { $in: viewer.allowedNumbers };
+    const items = await Lead.find(q)
+      .sort({ createdAt: -1 })
+      .limit(300)
+      .populate("contact")
+      .populate("assignedTo", "name")
+      .populate("number", "label")
+      .lean();
+    res.json(
+      items.map((l) => ({
+        ...l,
+        contact: maskContact(l.contact as any, viewer),
+      })),
+    );
+  },
+);
 
-apiRouter.patch("/leads/:id", requirePermission("leads.manage"), async (req, res) => {
-  const allowed: Record<string, unknown> = {};
-  for (const k of ["status", "note", "score", "interest"] as const) {
-    if (k in (req.body || {})) allowed[k] = req.body[k];
-  }
-  if ("assignedTo" in (req.body || {})) allowed.assignedTo = req.body.assignedTo || undefined;
-  res.json(await Lead.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true }).lean());
-});
+apiRouter.patch(
+  "/leads/:id",
+  requirePermission("leads.manage"),
+  async (req, res) => {
+    const allowed: Record<string, unknown> = {};
+    for (const k of ["status", "note", "score", "interest"] as const) {
+      if (k in (req.body || {})) allowed[k] = req.body[k];
+    }
+    if ("assignedTo" in (req.body || {}))
+      allowed.assignedTo = req.body.assignedTo || undefined;
+    res.json(
+      await Lead.findByIdAndUpdate(
+        req.params.id,
+        { $set: allowed },
+        { new: true },
+      ).lean(),
+    );
+  },
+);
 
 // ════════════════════════════════════════════════════════
 // TICKETS
 // ════════════════════════════════════════════════════════
-apiRouter.get("/tickets", requirePermission("tickets.view"), async (req: AuthedRequest, res) => {
-  const viewer = req.viewer!;
-  const q: Record<string, unknown> = {};
-  if (req.query.status) q.status = req.query.status;
-  const items = await Ticket.find(q)
-    .sort({ createdAt: -1 })
-    .limit(300)
-    .populate("contact")
-    .populate("assignedTo", "name")
-    .lean();
-  res.json(items.map((t) => ({ ...t, contact: maskContact(t.contact as any, viewer) })));
-});
+apiRouter.get(
+  "/tickets",
+  requirePermission("tickets.view"),
+  async (req: AuthedRequest, res) => {
+    const viewer = req.viewer!;
+    const q: Record<string, unknown> = {};
+    if (req.query.status) q.status = req.query.status;
+    const items = await Ticket.find(q)
+      .sort({ createdAt: -1 })
+      .limit(300)
+      .populate("contact")
+      .populate("assignedTo", "name")
+      .lean();
+    res.json(
+      items.map((t) => ({
+        ...t,
+        contact: maskContact(t.contact as any, viewer),
+      })),
+    );
+  },
+);
 
-apiRouter.patch("/tickets/:id", requirePermission("tickets.manage"), async (req, res) => {
-  const allowed: Record<string, unknown> = {};
-  for (const k of ["status", "priority", "category", "subject", "detail"] as const) {
-    if (k in (req.body || {})) allowed[k] = req.body[k];
-  }
-  if ("assignedTo" in (req.body || {})) allowed.assignedTo = req.body.assignedTo || undefined;
-  res.json(await Ticket.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true }).lean());
-});
+apiRouter.patch(
+  "/tickets/:id",
+  requirePermission("tickets.manage"),
+  async (req, res) => {
+    const allowed: Record<string, unknown> = {};
+    for (const k of [
+      "status",
+      "priority",
+      "category",
+      "subject",
+      "detail",
+    ] as const) {
+      if (k in (req.body || {})) allowed[k] = req.body[k];
+    }
+    if ("assignedTo" in (req.body || {}))
+      allowed.assignedTo = req.body.assignedTo || undefined;
+    res.json(
+      await Ticket.findByIdAndUpdate(
+        req.params.id,
+        { $set: allowed },
+        { new: true },
+      ).lean(),
+    );
+  },
+);
 
 // ════════════════════════════════════════════════════════
 // CUSTOMER LOOKUP
 // ════════════════════════════════════════════════════════
-apiRouter.post("/customer-lookup/test", requirePermission("settings.manage"), async (req, res) => {
-  const phone = String(req.body?.phone || "").replace(/[^0-9]/g, "");
-  if (!phone) {
-    res.status(400).json({ error: "phone required" });
-    return;
-  }
-  const contact = await Contact.findOneAndUpdate(
-    { waId: phone },
-    { $setOnInsert: { waId: phone } },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
-  await syncCustomer(contact, true);
-  const data: Record<string, string> = {};
-  contact.customerData?.forEach?.((v: string, k: string) => (data[k] = v));
-  res.json({
-    isCustomer: contact.isCustomer,
-    error: contact.customerLookupError,
-    fields: data
-  });
-});
+apiRouter.post(
+  "/customer-lookup/test",
+  requirePermission("settings.manage"),
+  async (req, res) => {
+    const phone = String(req.body?.phone || "").replace(/[^0-9]/g, "");
+    if (!phone) {
+      res.status(400).json({ error: "phone required" });
+      return;
+    }
+    const contact = await Contact.findOneAndUpdate(
+      { waId: phone },
+      { $setOnInsert: { waId: phone } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+    await syncCustomer(contact, true);
+    const data: Record<string, string> = {};
+    contact.customerData?.forEach?.((v: string, k: string) => (data[k] = v));
+    res.json({
+      isCustomer: contact.isCustomer,
+      error: contact.customerLookupError,
+      fields: data,
+    });
+  },
+);
 
 apiRouter.post("/contacts/:id/refresh-customer", async (req, res) => {
   const contact = await Contact.findById(req.params.id);
@@ -862,7 +1129,8 @@ apiRouter.get("/contacts", async (req: AuthedRequest, res) => {
   const search = String(req.query.search || "").trim();
   const tag = String(req.query.tag || "").trim();
   const q: Record<string, unknown> = {};
-  if (search) q.$or = [{ name: new RegExp(search, "i") }, { waId: new RegExp(search) }];
+  if (search)
+    q.$or = [{ name: new RegExp(search, "i") }, { waId: new RegExp(search) }];
   if (tag) q.tags = tag;
   const items = await Contact.find(q).sort({ updatedAt: -1 }).limit(500).lean();
   res.json(items.map((c) => maskContact(c as any, viewer)));
@@ -877,17 +1145,27 @@ apiRouter.post("/contacts", async (req, res) => {
   const c = await Contact.findOneAndUpdate(
     { waId: String(waId).replace(/[^0-9]/g, "") },
     { $set: { name: name || "", tags: tags || [], email } },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, new: true, setDefaultsOnInsert: true },
   );
   res.json(c);
 });
 
 apiRouter.patch("/contacts/:id", async (req, res) => {
   const allowed: Record<string, unknown> = {};
-  for (const k of ["name", "tags", "optedOut", "attributes", "email"] as const) {
+  for (const k of [
+    "name",
+    "tags",
+    "optedOut",
+    "attributes",
+    "email",
+  ] as const) {
     if (k in (req.body || {})) allowed[k] = req.body[k];
   }
-  const c = await Contact.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true }).lean();
+  const c = await Contact.findByIdAndUpdate(
+    req.params.id,
+    { $set: allowed },
+    { new: true },
+  ).lean();
   res.json(c);
 });
 
@@ -904,8 +1182,11 @@ apiRouter.post("/contacts/import", async (req, res) => {
     if (!waId) continue;
     await Contact.findOneAndUpdate(
       { waId },
-      { $set: { name: r.name || "" }, $addToSet: { tags: { $each: r.tags || [] } } },
-      { upsert: true, setDefaultsOnInsert: true }
+      {
+        $set: { name: r.name || "" },
+        $addToSet: { tags: { $each: r.tags || [] } },
+      },
+      { upsert: true, setDefaultsOnInsert: true },
     );
     imported++;
   }
@@ -922,17 +1203,23 @@ apiRouter.get("/templates", async (_req, res) => {
 apiRouter.post("/templates/sync", async (_req, res) => {
   const numbers = await WabaNumber.find();
   const wabaIds = Array.from(new Set(numbers.map((n) => n.businessAccountId)));
-  if (!wabaIds.length && env.whatsapp.businessAccountId) wabaIds.push(env.whatsapp.businessAccountId);
+  if (!wabaIds.length && env.whatsapp.businessAccountId)
+    wabaIds.push(env.whatsapp.businessAccountId);
   let synced = 0;
   const errors: string[] = [];
   for (const wabaId of wabaIds) {
-    const token = numbers.find((n) => n.businessAccountId === wabaId)?.tokenOverride;
+    const token = numbers.find(
+      (n) => n.businessAccountId === wabaId,
+    )?.tokenOverride;
     try {
       const metaTemplates = await wa.fetchTemplates(wabaId, token);
       for (const t of metaTemplates) {
         const body = (t.components || []).find((c: any) => c.type === "BODY");
-        const header = (t.components || []).find((c: any) => c.type === "HEADER");
-        const varCount = (String(body?.text || "").match(/\{\{\d+\}\}/g) || []).length;
+        const header = (t.components || []).find(
+          (c: any) => c.type === "HEADER",
+        );
+        const varCount = (String(body?.text || "").match(/\{\{\d+\}\}/g) || [])
+          .length;
         await Template.findOneAndUpdate(
           { name: t.name, language: t.language },
           {
@@ -944,15 +1231,17 @@ apiRouter.post("/templates/sync", async (_req, res) => {
               variableCount: varCount,
               components: t.components || [],
               metaId: t.id,
-              businessAccountId: wabaId
-            }
+              businessAccountId: wabaId,
+            },
           },
-          { upsert: true, setDefaultsOnInsert: true }
+          { upsert: true, setDefaultsOnInsert: true },
         );
         synced++;
       }
     } catch (e: any) {
-      errors.push(`${wabaId}: ${e?.response?.data?.error?.message || e.message}`);
+      errors.push(
+        `${wabaId}: ${e?.response?.data?.error?.message || e.message}`,
+      );
     }
   }
   if (errors.length && synced === 0) {
@@ -963,26 +1252,37 @@ apiRouter.post("/templates/sync", async (_req, res) => {
 });
 
 apiRouter.post("/templates", async (req, res) => {
-  const { name, language, category, bodyText, businessAccountId } = req.body || {};
+  const { name, language, category, bodyText, businessAccountId } =
+    req.body || {};
   if (!name || !bodyText) {
     res.status(400).json({ error: "name and bodyText required" });
     return;
   }
-  const wabaId = businessAccountId || (await WabaNumber.findOne())?.businessAccountId || env.whatsapp.businessAccountId;
+  const wabaId =
+    businessAccountId ||
+    (await WabaNumber.findOne())?.businessAccountId ||
+    env.whatsapp.businessAccountId;
   if (!wabaId) {
     res.status(400).json({ error: "No WhatsApp Business Account configured" });
     return;
   }
   try {
     await wa.createTemplate(wabaId, {
-      name: String(name).toLowerCase().replace(/[^a-z0-9_]/g, "_"),
+      name: String(name)
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, "_"),
       language: language || "en",
       category: category || "MARKETING",
-      bodyText
+      bodyText,
     });
-    res.json({ ok: true, note: "Submitted to Meta for approval. Sync after approval." });
+    res.json({
+      ok: true,
+      note: "Submitted to Meta for approval. Sync after approval.",
+    });
   } catch (e: any) {
-    res.status(502).json({ error: e?.response?.data?.error?.message || e.message });
+    res
+      .status(502)
+      .json({ error: e?.response?.data?.error?.message || e.message });
   }
 });
 
@@ -990,12 +1290,24 @@ apiRouter.post("/templates", async (req, res) => {
 // BROADCASTS
 // ════════════════════════════════════════════════════════
 apiRouter.get("/broadcasts", async (_req, res) => {
-  res.json(await Broadcast.find().sort({ createdAt: -1 }).populate("number", "label displayPhoneNumber").lean());
+  res.json(
+    await Broadcast.find()
+      .sort({ createdAt: -1 })
+      .populate("number", "label displayPhoneNumber")
+      .lean(),
+  );
 });
 
 apiRouter.post("/broadcasts", async (req, res) => {
-  const { name, templateName, templateLanguage, bodyParams, audienceTags, scheduledAt, number } =
-    req.body || {};
+  const {
+    name,
+    templateName,
+    templateLanguage,
+    bodyParams,
+    audienceTags,
+    scheduledAt,
+    number,
+  } = req.body || {};
   if (!name || !templateName) {
     res.status(400).json({ error: "name and templateName required" });
     return;
@@ -1008,18 +1320,24 @@ apiRouter.post("/broadcasts", async (req, res) => {
     bodyParams: bodyParams || [],
     audienceTags: audienceTags || [],
     scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
-    status: scheduledAt ? "scheduled" : "draft"
+    status: scheduledAt ? "scheduled" : "draft",
   });
   res.json(b);
 });
 
 apiRouter.post("/broadcasts/:id/send", async (req, res) => {
-  runBroadcast(req.params.id).catch((e) => console.error("[broadcast]", e.message));
+  runBroadcast(req.params.id).catch((e) =>
+    console.error("[broadcast]", e.message),
+  );
   res.json({ ok: true, started: true });
 });
 
 apiRouter.post("/broadcasts/:id/cancel", async (req, res) => {
-  const b = await Broadcast.findByIdAndUpdate(req.params.id, { $set: { status: "cancelled" } }, { new: true }).lean();
+  const b = await Broadcast.findByIdAndUpdate(
+    req.params.id,
+    { $set: { status: "cancelled" } },
+    { new: true },
+  ).lean();
   res.json(b);
 });
 
@@ -1042,14 +1360,16 @@ apiRouter.get("/workflows", async (_req, res) => {
 apiRouter.post("/workflows", async (req, res) => {
   const body = req.body || {};
   if (!body.name || !body.templateName || !body.number) {
-    res.status(400).json({ error: "name, templateName and number are required" });
+    res
+      .status(400)
+      .json({ error: "name, templateName and number are required" });
     return;
   }
   const w = await Workflow.create({
     name: body.name,
     description: body.description || "",
     key: newKey(body.name),
-    secret: newSecret(),
+    secret: "", // no secret by default — public endpoint
     number: body.number,
     templateName: body.templateName,
     templateLanguage: body.templateLanguage || "en",
@@ -1062,7 +1382,7 @@ apiRouter.post("/workflows", async (req, res) => {
     addLabels: body.addLabels || [],
     dedupe: body.dedupe || "none",
     delayMinutes: Number(body.delayMinutes) || 0,
-    enabled: body.enabled !== false
+    enabled: body.enabled !== false,
   });
   res.json(w);
 });
@@ -1084,11 +1404,15 @@ apiRouter.patch("/workflows/:id", async (req, res) => {
     "addLabels",
     "dedupe",
     "delayMinutes",
-    "enabled"
+    "enabled",
   ] as const) {
     if (k in (req.body || {})) allowed[k] = req.body[k];
   }
-  const w = await Workflow.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true }).lean();
+  const w = await Workflow.findByIdAndUpdate(
+    req.params.id,
+    { $set: allowed },
+    { new: true },
+  ).lean();
   res.json(w);
 });
 
@@ -1099,10 +1423,12 @@ apiRouter.delete("/workflows/:id", async (req, res) => {
 });
 
 apiRouter.post("/workflows/:id/rotate-secret", async (req, res) => {
+  // body: { clear: true } → remove secret, omit/false → generate new secret
+  const newVal = req.body?.clear ? "" : newSecret();
   const w = await Workflow.findByIdAndUpdate(
     req.params.id,
-    { $set: { secret: newSecret() } },
-    { new: true }
+    { $set: { secret: newVal } },
+    { new: true },
   ).lean();
   res.json(w);
 });
@@ -1140,7 +1466,15 @@ apiRouter.get("/workflows-report", async (_req, res) => {
       acc.skipped += w.stats.skipped;
       return acc;
     },
-    { targeted: 0, processed: 0, sent: 0, delivered: 0, read: 0, failed: 0, skipped: 0 }
+    {
+      targeted: 0,
+      processed: 0,
+      sent: 0,
+      delivered: 0,
+      read: 0,
+      failed: 0,
+      skipped: 0,
+    },
   );
   const recent = await WorkflowEvent.find()
     .sort({ createdAt: -1 })
@@ -1169,7 +1503,13 @@ apiRouter.patch("/knowledge/:id", async (req, res) => {
   for (const k of ["title", "content", "enabled"] as const) {
     if (k in (req.body || {})) allowed[k] = req.body[k];
   }
-  res.json(await KnowledgeDoc.findByIdAndUpdate(req.params.id, { $set: allowed }, { new: true }).lean());
+  res.json(
+    await KnowledgeDoc.findByIdAndUpdate(
+      req.params.id,
+      { $set: allowed },
+      { new: true },
+    ).lean(),
+  );
 });
 apiRouter.delete("/knowledge/:id", async (req, res) => {
   await KnowledgeDoc.deleteOne({ _id: req.params.id });
@@ -1211,7 +1551,7 @@ apiRouter.patch("/settings", async (req, res) => {
     "customerLookupHeaders",
     "customerLookupCacheMinutes",
     "customerFoundPath",
-    "customerDataPath"
+    "customerDataPath",
   ] as const;
   for (const k of allowed) {
     if (k in (req.body || {})) (s as any)[k] = req.body[k];
@@ -1235,43 +1575,62 @@ apiRouter.post(
 
 apiRouter.get("/analytics/overview", async (_req, res) => {
   const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
-  const [contacts, openConvs, msgIn, msgOut, aiReplies, byDay, numbers, optedOut, needsHuman] =
-    await Promise.all([
-      Contact.countDocuments(),
-      Conversation.countDocuments({ status: { $in: ["open", "pending"] } }),
-      Message.countDocuments({ direction: "in", createdAt: { $gte: since } }),
-      Message.countDocuments({ direction: "out", createdAt: { $gte: since } }),
-      Message.countDocuments({ author: "ai", createdAt: { $gte: since } }),
-      Message.aggregate([
-        { $match: { createdAt: { $gte: since } } },
-        {
-          $group: {
-            _id: {
-              day: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-              direction: "$direction"
-            },
-            count: { $sum: 1 }
-          }
+  const [
+    contacts,
+    openConvs,
+    msgIn,
+    msgOut,
+    aiReplies,
+    byDay,
+    numbers,
+    optedOut,
+    needsHuman,
+  ] = await Promise.all([
+    Contact.countDocuments(),
+    Conversation.countDocuments({ status: { $in: ["open", "pending"] } }),
+    Message.countDocuments({ direction: "in", createdAt: { $gte: since } }),
+    Message.countDocuments({ direction: "out", createdAt: { $gte: since } }),
+    Message.countDocuments({ author: "ai", createdAt: { $gte: since } }),
+    Message.aggregate([
+      { $match: { createdAt: { $gte: since } } },
+      {
+        $group: {
+          _id: {
+            day: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+            direction: "$direction",
+          },
+          count: { $sum: 1 },
         },
-        { $sort: { "_id.day": 1 } }
-      ]),
-      WabaNumber.find().select("label displayPhoneNumber qualityRating messagingLimit status enabled sentToday").lean(),
-      Contact.countDocuments({ optedOut: true }),
-      Conversation.countDocuments({ labels: "needs-human" })
-    ]);
-  const automationRate = msgOut > 0 ? Math.round((aiReplies / msgOut) * 100) : 0;
+      },
+      { $sort: { "_id.day": 1 } },
+    ]),
+    WabaNumber.find()
+      .select(
+        "label displayPhoneNumber qualityRating messagingLimit status enabled sentToday",
+      )
+      .lean(),
+    Contact.countDocuments({ optedOut: true }),
+    Conversation.countDocuments({ labels: "needs-human" }),
+  ]);
+  const automationRate =
+    msgOut > 0 ? Math.round((aiReplies / msgOut) * 100) : 0;
 
   // Failure breakdown — the fastest way to spot a quality problem forming.
   const errorsRaw = await Message.aggregate([
     { $match: { status: "failed", createdAt: { $gte: since } } },
-    { $group: { _id: { code: "$errorCode", error: "$error" }, count: { $sum: 1 } } },
+    {
+      $group: {
+        _id: { code: "$errorCode", error: "$error" },
+        count: { $sum: 1 },
+      },
+    },
     { $sort: { count: -1 } },
-    { $limit: 8 }
+    { $limit: 8 },
   ]);
   const errors = errorsRaw.map((e) => ({
     code: e._id.code,
     message: e._id.error || "Unknown error",
-    count: e.count
+    count: e.count,
   }));
 
   const [alerts, escalations, atRisk] = await Promise.all([
@@ -1279,9 +1638,9 @@ apiRouter.get("/analytics/overview", async (_req, res) => {
     Message.countDocuments({
       author: "system",
       text: /AI escalated/,
-      createdAt: { $gte: since }
+      createdAt: { $gte: since },
     }),
-    Conversation.countDocuments({ labels: "at-risk" })
+    Conversation.countDocuments({ labels: "at-risk" }),
   ]);
 
   res.json({
@@ -1298,6 +1657,6 @@ apiRouter.get("/analytics/overview", async (_req, res) => {
     errors,
     alerts,
     escalations,
-    atRisk
+    atRisk,
   });
 });
