@@ -115,13 +115,31 @@ export default function SettingsPage() {
               <code className="bg-slate-100 px-1 rounded">OPENAI_API_KEY</code>).
             </p>
             <div>
-              <label className="label">System prompt (the AI's personality &amp; rules)</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="label mb-0">System prompt (the AI's personality &amp; rules)</label>
+                <button
+                  type="button"
+                  className="text-xs text-brand-600 hover:underline"
+                  onClick={async () => {
+                    if (!confirm("Replace the system prompt with the recommended Svastha prompt? Your current wording will be lost.")) return;
+                    const updated = await api<Settings>("/settings/restore-prompt", { method: "POST" });
+                    setS(updated);
+                    original.current = JSON.stringify(updated);
+                  }}
+                >
+                  Restore recommended prompt
+                </button>
+              </div>
               <textarea
                 className="input font-mono text-xs"
-                rows={6}
+                rows={14}
                 value={s.systemPrompt}
                 onChange={(e) => setS({ ...s, systemPrompt: e.target.value })}
               />
+              <p className="text-xs text-slate-400 mt-1">
+                Today's date, the current IST time and any ad the person clicked are added automatically — don't
+                write placeholders for them.
+              </p>
             </div>
             <div>
               <label className="label">Human-handoff keywords (comma-separated)</label>

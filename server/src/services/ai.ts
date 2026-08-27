@@ -25,6 +25,64 @@ export interface AiDecision {
   args?: Record<string, unknown>;
 }
 
+/**
+ * If they arrived by tapping a Meta ad, we know what they were looking at.
+ * Opening with that beats a cold "how can I help you".
+ */
+function referralContextBlock(contact: IContact): string {
+  const r = contact.referral;
+  if (!r || !r.sourceId) return "";
+  const parts = [
+    r.headline ? `Ad headline: "${r.headline}"` : "",
+    r.body ? `Ad text: "${r.body}"` : "",
+    r.sourceType ? `Source: ${r.sourceType}` : ""
+  ].filter(Boolean);
+  if (!parts.length) return "";
+
+  return `\n\n## How this person reached us
+They tapped one of our ads on Facebook or Instagram to start this chat.
+${parts.join("\n")}
+
+Assume they are interested in what that ad offered. Acknowledge it naturally in your first reply instead of asking what they need — for example "Hi! Saw you're interested in the 21 Day Challenge 🙏 What would you like to know?". Do not read the ad text back to them word for word.`;
+}
+
+/**
+ * The model has no clock. Without this it cannot turn "tomorrow evening" into a
+ * real date, so booked calls land on the wrong day. Everything is IST because
+ * that's when the team actually calls people.
+ */
+function dateContextBlock(): string {
+  const tz = "Asia/Kolkata";
+  const now = new Date();
+  const fmt = (d: Date) =>
+    d.toLocaleDateString("en-CA", { timeZone: tz }); // YYYY-MM-DD
+  const dayName = (d: Date) =>
+    d.toLocaleDateString("en-GB", { timeZone: tz, weekday: "long" });
+
+  const today = new Date(now);
+  const upcoming: string[] = [];
+  for (let i = 1; i <= 7; i++) {
+    const d = new Date(now.getTime() + i * 86400000);
+    upcoming.push(`- ${dayName(d)} = ${fmt(d)}${i === 1 ? " (this is “tomorrow”)" : ""}`);
+  }
+
+  return `\n\n## Today's date and time
+Today is ${dayName(today)}, ${fmt(today)} (IST). The current time is ${now.toLocaleTimeString(
+    "en-GB",
+    { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false },
+  )} IST.
+
+The next seven days:
+${upcoming.join("\n")}
+
+## Converting what people say into a date and time
+- Work out the exact calendar date from whatever they say. "Tomorrow" is the date listed above. A weekday name means the next such date after today.
+- Convert times to 24-hour format. "Morning" = 11:00, "afternoon" = 15:00, "evening" = 18:00, unless they give a specific time.
+- Our calling hours are 10:00 to 19:00 IST. If they ask for a time outside that, warmly suggest the nearest time inside our hours and use that instead.
+- If they ask for a time that has already passed today, assume they mean tomorrow and confirm it with them.
+- Always repeat the day and time back to them in plain language when you confirm.`;
+}
+
 async function buildSystemPrompt(
   number?: IWabaNumber | null,
   contact?: IContact | null,
@@ -32,6 +90,11 @@ async function buildSystemPrompt(
   const settings = await getSettings();
   const docs = await KnowledgeDoc.find({ enabled: true }).lean();
   let prompt = number?.systemPromptOverride?.trim() || settings.systemPrompt;
+
+  prompt += dateContextBlock();
+
+  // Where they came from — a click-to-WhatsApp ad tells us what they're after.
+  if (contact) prompt += referralContextBlock(contact);
 
   if (number) {
     prompt += `\n\nYou are answering on the business WhatsApp number "${number.verifiedName || number.label}" (${number.displayPhoneNumber}).`;
@@ -282,6 +345,67 @@ export async function generateReply(
   if (decision.kind === "action")
     return `[The AI would run the "${decision.actionName}" action here with: ${JSON.stringify(decision.args)}]`;
   return "";
+}
+
+/** Returned when following up would be a bad idea. */
+export const FOLLOWUP_SKIP = "[[SKIP]]";
+
+/**
+ * Write a single nudge for someone who went quiet.
+ *
+ * The hard part isn't writing the nudge — it's knowing when NOT to. Chasing
+ * someone who already said no is how a number gets blocked and reported, so
+ * the model is told to return a skip marker instead.
+ */
+export async function generateFollowUp(
+  conversationId: Types.ObjectId,
+  number: IWabaNumber | null,
+  contact: IContact | null,
+  opts: { attempt: number; hoursQuiet: number; lastNudges: string[] },
+): Promise<string> {
+  try {
+    const settings = await getSettings();
+    const turns = await buildHistory(conversationId, 16);
+    if (!turns.length) return FOLLOWUP_SKIP;
+
+    const base = await buildSystemPrompt(number, contact);
+
+    const system = `${base}
+
+## YOUR TASK RIGHT NOW — write one follow-up message
+This person stopped replying about ${Math.round(opts.hoursQuiet)} hour(s) ago. This is follow-up attempt ${opts.attempt}.
+${opts.lastNudges.length ? `You have already sent these nudges — do NOT repeat them or say the same thing differently:\n${opts.lastNudges.map((n) => `- "${n}"`).join("\n")}` : ""}
+
+Write ONE short message (maximum 2 sentences) that picks up naturally from where the conversation stopped. Reference the specific thing that was being discussed — their goal, the question you asked, whatever they were deciding. Make it easy to reply to.
+
+RETURN THE MARKER ${FOLLOWUP_SKIP} AND NOTHING ELSE IF:
+- They said no, not interested, not now, "cannot afford", "will think about it and let you know", or asked you to stop.
+- They already booked a call, or their question was fully answered and needed no reply.
+- They sound irritated, or the last exchange ended badly.
+- This would be the third or later nudge and they have never once replied.
+- Anything about the conversation makes chasing them feel pushy.
+
+Chasing someone who has already declined gets our number blocked and reported. When in doubt, skip.
+Never mention that this is an automated follow-up. Never apologise for messaging again. Do not open with "Just following up".`;
+
+    let raw: string;
+    if (settings.aiProvider === "openai" && env.ai.openaiKey) {
+      const model = settings.aiModel.startsWith("gpt") ? settings.aiModel : "gpt-4o-mini";
+      const d = await callOpenAI(system, turns, model, 300);
+      raw = d.text || "";
+    } else {
+      if (!env.ai.anthropicKey) return FOLLOWUP_SKIP;
+      const model = settings.aiModel.startsWith("claude") ? settings.aiModel : "claude-sonnet-5";
+      const d = await callClaude(system, turns, model, 300);
+      raw = d.text || "";
+    }
+
+    if (!raw.trim() || raw.includes(FOLLOWUP_SKIP)) return FOLLOWUP_SKIP;
+    return sanitizeReply(raw, settings);
+  } catch (err: any) {
+    console.error("[followup] generation failed:", err.message);
+    return FOLLOWUP_SKIP;
+  }
 }
 
 /** Classify a conversation for lead management. */

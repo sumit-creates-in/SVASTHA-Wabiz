@@ -14,7 +14,8 @@ import {
   Target,
   LifeBuoy,
   UsersRound,
-  EyeOff
+  EyeOff,
+  Clock
 } from "lucide-react";
 import { getToken, clearToken } from "./lib/api";
 import { resetSocket } from "./lib/socket";
@@ -30,6 +31,7 @@ import SettingsPage from "./pages/Settings";
 import Numbers from "./pages/Numbers";
 import WorkflowsPage from "./pages/Workflows";
 import Actions from "./pages/Actions";
+import FollowUps from "./pages/FollowUps";
 import Leads from "./pages/Leads";
 import Team from "./pages/Team";
 
@@ -39,6 +41,7 @@ const nav = [
   { to: "/leads", label: "Leads & Tickets", icon: Target, perm: "leads.view" },
   { to: "/contacts", label: "Contacts", icon: Users, perm: "contacts.view" },
   { to: "/actions", label: "AI Actions", icon: Zap, perm: "actions.view" },
+  { to: "/followups", label: "Follow-ups", icon: Clock, perm: "actions.view" },
   { to: "/numbers", label: "Numbers", icon: Phone, perm: "numbers.view" },
   { to: "/workflows", label: "Workflows", icon: Webhook, perm: "workflows.view" },
   { to: "/broadcasts", label: "Broadcasts", icon: Megaphone, perm: "broadcasts.view" },
@@ -148,6 +151,7 @@ function AppRoutes() {
       <Route path="/leads" element={<Protected perm="leads.view"><Leads /></Protected>} />
       <Route path="/contacts" element={<Protected perm="contacts.view"><Contacts /></Protected>} />
       <Route path="/actions" element={<Protected perm="actions.view"><Actions /></Protected>} />
+      <Route path="/followups" element={<Protected perm="actions.view"><FollowUps /></Protected>} />
       <Route path="/numbers" element={<Protected perm="numbers.view"><Numbers /></Protected>} />
       <Route path="/workflows" element={<Protected perm="workflows.view"><WorkflowsPage /></Protected>} />
       <Route path="/broadcasts" element={<Protected perm="broadcasts.view"><Broadcasts /></Protected>} />
