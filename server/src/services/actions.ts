@@ -152,16 +152,11 @@ function normalizeDateTimeFields(
     const raw = out.preferred_time.trim();
     const parsed = tryParseTime(raw);
     if (parsed !== null) {
-      // Build a Date on today just to use toLocaleTimeString
-      const d = new Date();
-      d.setHours(parsed.h, parsed.m, 0, 0);
-      // "4:00 PM"
-      out.preferred_time = d.toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-        timeZone: IST,
-      });
+      // Build AM/PM string directly from h/m — no Date object, no timezone shift.
+      const period = parsed.h >= 12 ? "PM" : "AM";
+      const hour12 = parsed.h % 12 === 0 ? 12 : parsed.h % 12;
+      const mins = parsed.m.toString().padStart(2, "0");
+      out.preferred_time = `${hour12}:${mins} ${period}`;
     }
   }
 
