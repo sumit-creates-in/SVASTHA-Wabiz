@@ -112,6 +112,156 @@ function renderTemplate(tpl: string, vars: Record<string, string>): string {
   return tpl.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, key) => vars[key] ?? "");
 }
 
+/**
+ * Normalize date/time fields before sending to webhook.
+ *
+ * User can say anything — "kal 4 baje", "tomorrow 4pm", "Monday evening",
+ * "27 Aug", "16:00" etc. We parse it into two clean, consistent strings
+ * that Google Sheets (or any webhook receiver) can read directly:
+ *
+ *   preferred_day  → "27 August 2026"   (full unambiguous date)
+ *   preferred_time → "4:00 PM"          (12-hour AM/PM, single string)
+ *
+ * Uses JS Date + locale formatting — no extra dependencies needed.
+ * Falls back to the original value if we can't parse it cleanly.
+ */
+function normalizeDateTimeFields(
+  input: Record<string, string>,
+): Record<string, string> {
+  const out = { ...input };
+  const IST = "Asia/Kolkata";
+
+  // ── preferred_day ──────────────────────────────────────────────────────
+  if (out.preferred_day) {
+    const raw = out.preferred_day.trim();
+    const parsed = tryParseDate(raw);
+    if (parsed) {
+      // "27 August 2026"
+      out.preferred_day = parsed.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: IST,
+      });
+    }
+    // else keep original — better than sending garbage
+  }
+
+  // ── preferred_time ─────────────────────────────────────────────────────
+  if (out.preferred_time) {
+    const raw = out.preferred_time.trim();
+    const parsed = tryParseTime(raw);
+    if (parsed !== null) {
+      // Build a Date on today just to use toLocaleTimeString
+      const d = new Date();
+      d.setHours(parsed.h, parsed.m, 0, 0);
+      // "4:00 PM"
+      out.preferred_time = d.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: IST,
+      });
+    }
+  }
+
+  return out;
+}
+
+/** Try to extract a Date from a free-form date string. */
+function tryParseDate(raw: string): Date | null {
+  // 1. Direct parse (handles "2026-08-27", "Aug 27 2026", "27 Aug 2026" etc.)
+  const direct = new Date(raw);
+  if (!isNaN(direct.getTime())) return direct;
+
+  const lower = raw.toLowerCase();
+  const IST_OFFSET = 5.5 * 60; // minutes ahead of UTC
+  const nowUTC = Date.now();
+  const nowIST = new Date(nowUTC + IST_OFFSET * 60 * 1000);
+
+  // 2. Relative words
+  if (/\btoday\b|aaj/.test(lower)) return nowIST;
+  if (/\btomorrow\b|kal\b|kal$/.test(lower)) {
+    const t = new Date(nowIST);
+    t.setDate(t.getDate() + 1);
+    return t;
+  }
+  if (/\bday after tomorrow\b|parso/.test(lower)) {
+    const t = new Date(nowIST);
+    t.setDate(t.getDate() + 2);
+    return t;
+  }
+
+  // 3. Weekday names → next occurrence
+  const days = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ];
+  for (let i = 0; i < days.length; i++) {
+    if (lower.includes(days[i])) {
+      const t = new Date(nowIST);
+      const diff = (i - t.getDay() + 7) % 7 || 7; // always future
+      t.setDate(t.getDate() + diff);
+      return t;
+    }
+  }
+
+  // 4. Hindi day names
+  const hindiDays: Record<string, number> = {
+    somwar: 1,
+    mangalwar: 2,
+    budhwar: 3,
+    guruwar: 4,
+    shukrawar: 5,
+    shaniwar: 6,
+    raviwar: 0,
+  };
+  for (const [name, idx] of Object.entries(hindiDays)) {
+    if (lower.includes(name)) {
+      const t = new Date(nowIST);
+      const diff = (idx - t.getDay() + 7) % 7 || 7;
+      t.setDate(t.getDate() + diff);
+      return t;
+    }
+  }
+
+  return null;
+}
+
+/** Try to extract hours + minutes from a free-form time string. Returns null if unparseable. */
+function tryParseTime(raw: string): { h: number; m: number } | null {
+  const lower = raw.toLowerCase().replace(/\s+/g, " ").trim();
+
+  // Named periods (English + Hindi)
+  if (/\bmorning\b|subah|savere/.test(lower)) return { h: 10, m: 0 };
+  if (/\bnoon\b|dopahar/.test(lower)) return { h: 12, m: 0 };
+  if (/\bafternoon\b/.test(lower)) return { h: 14, m: 0 };
+  if (/\bevening\b|sham|shaam/.test(lower)) return { h: 18, m: 0 };
+  if (/\bnight\b|raat/.test(lower)) return { h: 20, m: 0 };
+
+  // "4:30 pm", "4:30pm", "16:30", "4 pm", "4pm"
+  const match = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+  if (!match) return null;
+
+  let h = parseInt(match[1], 10);
+  const m = parseInt(match[2] || "0", 10);
+  const period = match[3];
+
+  if (period === "pm" && h < 12) h += 12;
+  if (period === "am" && h === 12) h = 0;
+
+  // Ambiguous bare numbers like "4" — assume PM if 1-6, AM if 7-11
+  if (!period && h >= 1 && h <= 6) h += 12;
+
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+  return { h, m };
+}
+
 function ticketReference(): string {
   return `SVT-${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString("hex").toUpperCase()}`;
 }
@@ -161,6 +311,9 @@ export async function runAction(
 
   const ticketRef = action.createsTicket ? ticketReference() : undefined;
 
+  // ── Normalize date/time fields before building the payload ──
+  const normalizedInput = normalizeDateTimeFields(input);
+
   // Standard envelope — predictable shape for whatever receives it.
   const envelope = {
     event: action.name,
@@ -179,14 +332,14 @@ export async function runAction(
       numberLabel: number.label,
       conversationId: String(conversation._id),
     },
-    data: input,
+    data: normalizedInput,
     ...(ticketRef ? { ticketReference: ticketRef } : {}),
   };
 
   let payload: unknown = envelope;
   if (action.payloadTemplate?.trim()) {
     const vars: Record<string, string> = {
-      ...input,
+      ...normalizedInput,
       name: contact.name,
       phone: contact.waId,
       email: contact.email || "",
@@ -301,15 +454,15 @@ export async function runAction(
         conversation: conversation._id,
         number: number._id,
         interest:
-          input.interest ||
-          input.programme ||
-          input.program ||
+          normalizedInput.interest ||
+          normalizedInput.programme ||
+          normalizedInput.program ||
           action.displayName,
         source: `ai:${action.name}`,
-        qualification: new Map(Object.entries(input)),
-        score: scoreLead(input),
+        qualification: new Map(Object.entries(normalizedInput)),
+        score: scoreLead(normalizedInput),
         status:
-          input.preferred_time || input.preferred_day
+          normalizedInput.preferred_time || normalizedInput.preferred_day
             ? "call_booked"
             : "qualified",
       });
