@@ -493,7 +493,8 @@ export async function runAction(
   }
 
   if (action.handoffAfter) {
-    conversation.aiEnabled = false;
+    // Do NOT disable AI — AI always keeps replying.
+    // Just flag for the human team to follow up.
     conversation.status = "pending";
     conversation.labels = Array.from(
       new Set([...conversation.labels, "needs-human"]),

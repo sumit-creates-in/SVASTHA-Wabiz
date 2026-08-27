@@ -228,15 +228,16 @@ export async function handleInboundMessage(
   }
   if (!conversation.aiEnabled) {
     console.log(
-      `[ai-debug] ❌ blocked: aiEnabled is OFF for conversation ${conversation._id} (contact ${waId})`,
+      `[ai-debug] ⚠️ conversation aiEnabled is OFF for ${conversation._id} — but AI replies are always-on, continuing`,
     );
-    return;
+    // NOTE: We do NOT block here. AI always replies regardless of conversation-level flag.
+    // The flag is still respected for botPaused (opt-out) flows above.
   }
   if (aiTemporarilyPaused(conversation)) {
     console.log(
-      `[ai-debug] ❌ blocked: AI temporarily paused (human takeover) until ${conversation.aiPausedUntil} for ${waId}`,
+      `[ai-debug] ⚠️ AI temporarily paused until ${conversation.aiPausedUntil} for ${waId} — but AI replies are always-on, continuing`,
     );
-    return;
+    // NOTE: We do NOT block here either.
   }
   if (!["text", "button", "interactive"].includes(type)) {
     console.log(
@@ -258,7 +259,8 @@ export async function handleInboundMessage(
   const frustrated = settings.frustrationAutoHandoff && detectFrustration(text);
 
   if (askedForHuman || frustrated) {
-    conversation.aiEnabled = false;
+    // Label the conversation for the human team but do NOT disable AI.
+    // AI always keeps replying — the human can step in from Inbox anytime.
     conversation.status = "pending";
     conversation.labels = Array.from(
       new Set([
@@ -276,33 +278,12 @@ export async function handleInboundMessage(
         direction: "out",
         author: "system",
         type: "text",
-        text: "AI paused — customer sounds unhappy. Reply personally to avoid a block or report.",
+        text: "AI flagged — customer sounds unhappy. Consider replying personally.",
         status: "sent",
       });
     }
-    const ack =
-      frustrated && !askedForHuman
-        ? "I'm sorry about that — I'm passing this to a colleague who will reply here personally."
-        : "Sure — a member of our team will reply to you here shortly.";
-    const r = await wa.sendText(number, waId, ack);
-    await Message.create({
-      conversation: conversation._id,
-      contact: contact._id,
-      number: number._id,
-      direction: "out",
-      author: "system",
-      type: "text",
-      text: ack,
-      waMessageId: r.waMessageId,
-      status: r.error ? "failed" : "sent",
-      error: r.error,
-    });
     emit("conversation:update", conversation.toObject());
-    emit("message:new", {
-      message: { text: ack },
-      conversation: conversation.toObject(),
-    });
-    return;
+    // Do NOT return — let AI reply below.
   }
 
   // ── 4. Policy gate: 24h window, opt-out, quality ──────
@@ -401,8 +382,7 @@ export async function handleInboundMessage(
     });
 
     if (!result.ok) {
-      // Never tell the customer it worked when it didn't — hand to a human.
-      conversation.aiEnabled = false;
+      // Action failed — flag for human team but keep AI running.
       conversation.status = "pending";
       conversation.labels = Array.from(
         new Set([...conversation.labels, "needs-human", "action-failed"]),
@@ -507,7 +487,7 @@ export async function handleInboundMessage(
   }
 
   if (review.action === "escalate") {
-    conversation.aiEnabled = false;
+    // Flag for human team but keep AI running.
     conversation.status = "pending";
     conversation.labels = Array.from(
       new Set([...conversation.labels, "needs-human"]),
