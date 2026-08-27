@@ -14,10 +14,16 @@ hooksRouter.all("/:key", async (req, res) => {
     res.status(404).json({ error: "Unknown workflow" });
     return;
   }
-  const provided = (req.headers["x-svastha-secret"] as string) || (req.query.secret as string) || "";
-  if (provided !== workflow.secret) {
-    res.status(401).json({ error: "Invalid secret" });
-    return;
+  // If workflow has no secret set, skip auth check entirely
+  if (workflow.secret) {
+    const provided =
+      (req.headers["x-svastha-secret"] as string) ||
+      (req.query.secret as string) ||
+      "";
+    if (provided !== workflow.secret) {
+      res.status(401).json({ error: "Invalid secret" });
+      return;
+    }
   }
 
   const payload = req.method === "GET" ? req.query : req.body || {};

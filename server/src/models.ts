@@ -378,7 +378,7 @@ export interface IWorkflow extends Document {
   name: string;
   description: string;
   key: string; // URL path segment
-  secret: string; // shared secret header/query
+  secret?: string; // shared secret header/query — optional, blank = no auth
   number: Types.ObjectId;
   templateName: string;
   templateLanguage: string;
@@ -412,7 +412,7 @@ const workflowSchema = new Schema<IWorkflow>(
     name: { type: String, required: true },
     description: { type: String, default: "" },
     key: { type: String, required: true, unique: true, index: true },
-    secret: { type: String, required: true },
+    secret: { type: String, default: "" },
     number: { type: Schema.Types.ObjectId, ref: "WabaNumber", required: true },
     templateName: { type: String, required: true },
     templateLanguage: { type: String, default: "en" },
