@@ -342,6 +342,20 @@ export async function handleInboundMessage(
       return;
     }
 
+    // ── Dedup: agar yahi action is conversation mein pehle se succeed ho chuka hai to skip karo ──
+    const { ActionRun } = await import("../models");
+    const priorRun = await ActionRun.findOne({
+      action: action._id,
+      conversation: conversation._id,
+      status: "succeeded",
+    });
+    if (priorRun) {
+      console.log(
+        `[actions] ⚠️ skipping duplicate run of "${action.name}" — already succeeded for conversation ${conversation._id} (runId=${priorRun._id})`,
+      );
+      return;
+    }
+
     const result = await runAction(action, decision.args || {}, {
       contact,
       conversation,

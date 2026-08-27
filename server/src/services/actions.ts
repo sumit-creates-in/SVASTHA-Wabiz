@@ -21,7 +21,7 @@ import {
   IConversation,
   IWabaNumber,
   Lead,
-  Ticket
+  Ticket,
 } from "../models";
 import { emit } from "../realtime";
 
@@ -38,11 +38,15 @@ export interface ToolSchema {
 /** Actions available for this conversation, filtered by number and audience. */
 export async function actionsFor(
   number: IWabaNumber,
-  contact: IContact
+  contact: IContact,
 ): Promise<IAiAction[]> {
   const all = await AiAction.find({ enabled: true });
   return all.filter((a) => {
-    if (a.numbers.length && !a.numbers.some((n) => String(n) === String(number._id))) return false;
+    if (
+      a.numbers.length &&
+      !a.numbers.some((n) => String(n) === String(number._id))
+    )
+      return false;
     if (a.audience === "customer" && !contact.isCustomer) return false;
     if (a.audience === "lead" && contact.isCustomer) return false;
     return true;
@@ -56,11 +60,17 @@ export function toToolSchema(action: IAiAction): ToolSchema {
 
   for (const f of action.fields) {
     const prop: Record<string, unknown> = {
-      type: f.type === "number" ? "number" : f.type === "boolean" ? "boolean" : "string",
-      description: f.description || f.label || f.key
+      type:
+        f.type === "number"
+          ? "number"
+          : f.type === "boolean"
+            ? "boolean"
+            : "string",
+      description: f.description || f.label || f.key,
     };
     if (f.type === "enum" && f.options?.length) prop.enum = f.options;
-    if (f.type === "date") prop.description = `${prop.description} (natural language is fine, e.g. "tomorrow 4pm")`;
+    if (f.type === "date")
+      prop.description = `${prop.description} (natural language is fine, e.g. "tomorrow 4pm")`;
     properties[f.key] = prop;
     if (f.required) required.push(f.key);
   }
@@ -74,7 +84,11 @@ export function toToolSchema(action: IAiAction): ToolSchema {
   description +=
     "\n\nAsk the customer for any required information you don't already have, one or two questions at a time. Only call this once you have everything.";
 
-  return { name: action.name, description, input_schema: { type: "object", properties, required } };
+  return {
+    name: action.name,
+    description,
+    input_schema: { type: "object", properties, required },
+  };
 }
 
 /** OpenAI uses a slightly different envelope for the same thing. */
@@ -88,9 +102,9 @@ export function toOpenAiTool(action: IAiAction) {
       parameters: {
         type: "object",
         properties: s.input_schema.properties,
-        required: s.input_schema.required
-      }
-    }
+        required: s.input_schema.required,
+      },
+    },
   };
 }
 
@@ -116,11 +130,14 @@ export interface ActionResult {
 export async function runAction(
   action: IAiAction,
   args: Record<string, unknown>,
-  ctx: { contact: IContact; conversation: IConversation; number: IWabaNumber }
+  ctx: { contact: IContact; conversation: IConversation; number: IWabaNumber },
 ): Promise<ActionResult> {
   const { contact, conversation, number } = ctx;
 
-  await AiAction.updateOne({ _id: action._id }, { $inc: { "stats.triggered": 1 } });
+  await AiAction.updateOne(
+    { _id: action._id },
+    { $inc: { "stats.triggered": 1 } },
+  );
 
   // Validate required fields — never fire a half-filled webhook.
   const input: Record<string, string> = {};
@@ -128,8 +145,14 @@ export async function runAction(
     const raw = args[f.key];
     if (raw === undefined || raw === null || String(raw).trim() === "") {
       if (f.required) {
-        await AiAction.updateOne({ _id: action._id }, { $inc: { "stats.failed": 1 } });
-        return { ok: false, error: `Missing required field: ${f.label || f.key}` };
+        await AiAction.updateOne(
+          { _id: action._id },
+          { $inc: { "stats.failed": 1 } },
+        );
+        return {
+          ok: false,
+          error: `Missing required field: ${f.label || f.key}`,
+        };
       }
       continue;
     }
@@ -149,15 +172,15 @@ export async function runAction(
       email: contact.email || null,
       isCustomer: contact.isCustomer,
       externalId: contact.externalId || null,
-      tags: contact.tags
+      tags: contact.tags,
     },
     channel: {
       number: number.displayPhoneNumber,
       numberLabel: number.label,
-      conversationId: String(conversation._id)
+      conversationId: String(conversation._id),
     },
     data: input,
-    ...(ticketRef ? { ticketReference: ticketRef } : {})
+    ...(ticketRef ? { ticketReference: ticketRef } : {}),
   };
 
   let payload: unknown = envelope;
@@ -169,7 +192,7 @@ export async function runAction(
       email: contact.email || "",
       externalId: contact.externalId || "",
       numberLabel: number.label,
-      ticketReference: ticketRef || ""
+      ticketReference: ticketRef || "",
     };
     try {
       payload = JSON.parse(renderTemplate(action.payloadTemplate, vars));
@@ -186,11 +209,13 @@ export async function runAction(
     number: number._id,
     input,
     payload,
-    status: "pending"
+    status: "pending",
   });
 
   // ── Fire the webhook, with one retry on transient failure ──
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
   action.webhookHeaders?.forEach?.((v: string, k: string) => (headers[k] = v));
   if (action.webhookSecret) headers["x-svastha-secret"] = action.webhookSecret;
 
@@ -206,10 +231,13 @@ export async function runAction(
         headers,
         data: payload,
         timeout: 15000,
-        validateStatus: () => true
+        validateStatus: () => true,
       });
       responseStatus = res.status;
-      responseBody = typeof res.data === "string" ? res.data.slice(0, 2000) : JSON.stringify(res.data).slice(0, 2000);
+      responseBody =
+        typeof res.data === "string"
+          ? res.data.slice(0, 2000)
+          : JSON.stringify(res.data).slice(0, 2000);
       if (res.status >= 200 && res.status < 300) {
         lastError = "";
         break;
@@ -229,39 +257,68 @@ export async function runAction(
         error: lastError || undefined,
         responseStatus,
         responseBody,
-        attempts: lastError ? 2 : 1
-      }
-    }
+        attempts: lastError ? 2 : 1,
+      },
+    },
   );
 
   if (lastError) {
-    await AiAction.updateOne({ _id: action._id }, { $inc: { "stats.failed": 1 } });
+    await AiAction.updateOne(
+      { _id: action._id },
+      { $inc: { "stats.failed": 1 } },
+    );
     console.error(`[actions] ${action.name} failed: ${lastError}`);
     return { ok: false, error: lastError };
   }
 
-  await AiAction.updateOne({ _id: action._id }, { $inc: { "stats.succeeded": 1 } });
+  await AiAction.updateOne(
+    { _id: action._id },
+    { $inc: { "stats.succeeded": 1 } },
+  );
 
   // ── Side effects ──
   if (action.addTags.length) {
-    await Contact.updateOne({ _id: contact._id }, { $addToSet: { tags: { $each: action.addTags } } });
+    await Contact.updateOne(
+      { _id: contact._id },
+      { $addToSet: { tags: { $each: action.addTags } } },
+    );
   }
   if (action.addLabels.length) {
-    conversation.labels = Array.from(new Set([...conversation.labels, ...action.addLabels]));
+    conversation.labels = Array.from(
+      new Set([...conversation.labels, ...action.addLabels]),
+    );
   }
 
   if (action.createsLead) {
-    await Lead.create({
+    // Dedup: same contact ke liye same action source pe pehle se lead hai to dobara mat banao
+    const existingLead = await Lead.findOne({
       contact: contact._id,
-      conversation: conversation._id,
-      number: number._id,
-      interest: input.interest || input.programme || input.program || action.displayName,
       source: `ai:${action.name}`,
-      qualification: new Map(Object.entries(input)),
-      score: scoreLead(input),
-      status: input.preferred_time || input.preferred_day ? "call_booked" : "qualified"
     });
-    emit("lead:new", { contact: String(contact._id) });
+    if (!existingLead) {
+      await Lead.create({
+        contact: contact._id,
+        conversation: conversation._id,
+        number: number._id,
+        interest:
+          input.interest ||
+          input.programme ||
+          input.program ||
+          action.displayName,
+        source: `ai:${action.name}`,
+        qualification: new Map(Object.entries(input)),
+        score: scoreLead(input),
+        status:
+          input.preferred_time || input.preferred_day
+            ? "call_booked"
+            : "qualified",
+      });
+      emit("lead:new", { contact: String(contact._id) });
+    } else {
+      console.log(
+        `[actions] ⚠️ lead already exists for contact ${contact._id} action "${action.name}" — skipping duplicate`,
+      );
+    }
   }
 
   if (action.createsTicket && ticketRef) {
@@ -272,10 +329,12 @@ export async function runAction(
       subject: input.subject || input.issue || action.displayName,
       detail: input.detail || input.description || "",
       category: input.category || "general",
-      priority: (["low", "normal", "high", "urgent"].includes(String(input.priority))
+      priority: (["low", "normal", "high", "urgent"].includes(
+        String(input.priority),
+      )
         ? input.priority
         : "normal") as any,
-      externalId: extractExternalId(responseBody)
+      externalId: extractExternalId(responseBody),
     });
     emit("ticket:new", { contact: String(contact._id) });
   }
@@ -283,7 +342,9 @@ export async function runAction(
   if (action.handoffAfter) {
     conversation.aiEnabled = false;
     conversation.status = "pending";
-    conversation.labels = Array.from(new Set([...conversation.labels, "needs-human"]));
+    conversation.labels = Array.from(
+      new Set([...conversation.labels, "needs-human"]),
+    );
   }
   await conversation.save();
 
@@ -292,7 +353,7 @@ export async function runAction(
     ...input,
     name: contact.name || "there",
     ticketReference: ticketRef || "",
-    reference: ticketRef || ""
+    reference: ticketRef || "",
   });
 
   return { ok: true, confirmation, ticketReference: ticketRef };
@@ -312,7 +373,13 @@ function scoreLead(input: Record<string, string>): number {
 function extractExternalId(body: string): string | undefined {
   try {
     const parsed = JSON.parse(body);
-    return parsed?.id || parsed?.ticket_id || parsed?.ticketId || parsed?.reference || undefined;
+    return (
+      parsed?.id ||
+      parsed?.ticket_id ||
+      parsed?.ticketId ||
+      parsed?.reference ||
+      undefined
+    );
   } catch {
     return undefined;
   }

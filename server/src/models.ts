@@ -20,14 +20,22 @@ const userSchema = new Schema<IUser>(
     email: { type: String, required: true, unique: true, lowercase: true },
     passwordHash: { type: String, required: true },
     name: { type: String, default: "Admin" },
-    role: { type: String, enum: ["admin", "manager", "agent"], default: "agent" },
+    role: {
+      type: String,
+      enum: ["admin", "manager", "agent"],
+      default: "agent",
+    },
     active: { type: Boolean, default: true },
     permissions: { type: [String], default: [] },
-    allowedNumbers: { type: [Schema.Types.ObjectId], ref: "WabaNumber", default: [] },
+    allowedNumbers: {
+      type: [Schema.Types.ObjectId],
+      ref: "WabaNumber",
+      default: [],
+    },
     maskPhoneNumbers: { type: Boolean, default: false },
-    lastLoginAt: Date
+    lastLoginAt: Date,
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const User = model<IUser>("User", userSchema);
 
@@ -66,7 +74,11 @@ const wabaNumberSchema = new Schema<IWabaNumber>(
     displayPhoneNumber: { type: String, default: "" },
     verifiedName: { type: String, default: "" },
     tokenOverride: String,
-    purpose: { type: String, enum: ["marketing", "support", "otp", "mixed"], default: "mixed" },
+    purpose: {
+      type: String,
+      enum: ["marketing", "support", "otp", "mixed"],
+      default: "mixed",
+    },
     enabled: { type: Boolean, default: true },
     aiEnabled: { type: Boolean, default: true },
     systemPromptOverride: String,
@@ -80,9 +92,9 @@ const wabaNumberSchema = new Schema<IWabaNumber>(
     lastSyncError: String,
     lastWebhookAt: Date,
     sentToday: { type: Number, default: 0 },
-    sentTodayDate: { type: String, default: "" }
+    sentTodayDate: { type: String, default: "" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const WabaNumber = model<IWabaNumber>("WabaNumber", wabaNumberSchema);
 
@@ -123,9 +135,9 @@ const contactSchema = new Schema<IContact>(
     externalId: { type: String, index: true },
     customerData: { type: Map, of: String, default: {} },
     customerSyncedAt: Date,
-    customerLookupError: String
+    customerLookupError: String,
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const Contact = model<IContact>("Contact", contactSchema);
 
@@ -149,9 +161,23 @@ export interface IConversation extends Document {
 }
 const conversationSchema = new Schema<IConversation>(
   {
-    contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true, index: true },
-    number: { type: Schema.Types.ObjectId, ref: "WabaNumber", required: true, index: true },
-    status: { type: String, enum: ["open", "pending", "closed"], default: "open" },
+    contact: {
+      type: Schema.Types.ObjectId,
+      ref: "Contact",
+      required: true,
+      index: true,
+    },
+    number: {
+      type: Schema.Types.ObjectId,
+      ref: "WabaNumber",
+      required: true,
+      index: true,
+    },
+    status: {
+      type: String,
+      enum: ["open", "pending", "closed"],
+      default: "open",
+    },
     aiEnabled: { type: Boolean, default: true },
     botPaused: { type: Boolean, default: false },
     aiPausedUntil: Date,
@@ -163,12 +189,15 @@ const conversationSchema = new Schema<IConversation>(
     lastMessagePreview: { type: String, default: "" },
     assignedTo: { type: Schema.Types.ObjectId, ref: "User" },
     aiRepliesLastHour: { type: Number, default: 0 },
-    aiWindowStart: Date
+    aiWindowStart: Date,
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 conversationSchema.index({ contact: 1, number: 1 }, { unique: true });
-export const Conversation = model<IConversation>("Conversation", conversationSchema);
+export const Conversation = model<IConversation>(
+  "Conversation",
+  conversationSchema,
+);
 
 // ── Message ─────────────────────────────────────────────
 export interface IMessage extends Document {
@@ -189,26 +218,31 @@ export interface IMessage extends Document {
 }
 const messageSchema = new Schema<IMessage>(
   {
-    conversation: { type: Schema.Types.ObjectId, ref: "Conversation", required: true, index: true },
+    conversation: {
+      type: Schema.Types.ObjectId,
+      ref: "Conversation",
+      required: true,
+      index: true,
+    },
     contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true },
     number: { type: Schema.Types.ObjectId, ref: "WabaNumber" },
     direction: { type: String, enum: ["in", "out"], required: true },
     author: {
       type: String,
       enum: ["contact", "ai", "human", "system", "workflow", "broadcast"],
-      required: true
+      required: true,
     },
     type: { type: String, default: "text" },
     text: { type: String, default: "" },
     mediaId: String,
     mediaUrl: String,
-    waMessageId: { type: String, index: true },
+    waMessageId: { type: String, index: true, unique: true, sparse: true },
     status: { type: String, default: "received" },
     error: String,
     errorCode: { type: Number, index: true },
-    sentBy: { type: Schema.Types.ObjectId, ref: "User" }
+    sentBy: { type: Schema.Types.ObjectId, ref: "User" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const Message = model<IMessage>("Message", messageSchema);
 
@@ -236,9 +270,9 @@ const templateSchema = new Schema<ITemplate>(
     variableCount: { type: Number, default: 0 },
     components: { type: [Schema.Types.Mixed], default: [] },
     metaId: String,
-    businessAccountId: String
+    businessAccountId: String,
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 templateSchema.index({ name: 1, language: 1 }, { unique: true });
 export const Template = model<ITemplate>("Template", templateSchema);
@@ -252,8 +286,21 @@ export interface IBroadcast extends Document {
   bodyParams: string[];
   audienceTags: string[];
   scheduledAt?: Date;
-  status: "draft" | "scheduled" | "running" | "completed" | "failed" | "cancelled";
-  stats: { total: number; sent: number; delivered: number; read: number; failed: number; skipped: number };
+  status:
+    | "draft"
+    | "scheduled"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled";
+  stats: {
+    total: number;
+    sent: number;
+    delivered: number;
+    read: number;
+    failed: number;
+    skipped: number;
+  };
 }
 const broadcastSchema = new Schema<IBroadcast>(
   {
@@ -271,10 +318,10 @@ const broadcastSchema = new Schema<IBroadcast>(
       delivered: { type: Number, default: 0 },
       read: { type: Number, default: 0 },
       failed: { type: Number, default: 0 },
-      skipped: { type: Number, default: 0 }
-    }
+      skipped: { type: Number, default: 0 },
+    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const Broadcast = model<IBroadcast>("Broadcast", broadcastSchema);
 
@@ -287,15 +334,23 @@ export interface IBroadcastRecipient extends Document {
 }
 const broadcastRecipientSchema = new Schema<IBroadcastRecipient>(
   {
-    broadcast: { type: Schema.Types.ObjectId, ref: "Broadcast", required: true, index: true },
+    broadcast: {
+      type: Schema.Types.ObjectId,
+      ref: "Broadcast",
+      required: true,
+      index: true,
+    },
     contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true },
     waMessageId: { type: String, index: true },
     status: { type: String, default: "pending" },
-    error: String
+    error: String,
   },
-  { timestamps: true }
+  { timestamps: true },
 );
-export const BroadcastRecipient = model<IBroadcastRecipient>("BroadcastRecipient", broadcastRecipientSchema);
+export const BroadcastRecipient = model<IBroadcastRecipient>(
+  "BroadcastRecipient",
+  broadcastRecipientSchema,
+);
 
 // ── Webhook workflow (event → approved template) ────────
 export interface IWorkflow extends Document {
@@ -347,7 +402,11 @@ const workflowSchema = new Schema<IWorkflow>(
     nameField: { type: String, default: "name" },
     addTags: { type: [String], default: [] },
     addLabels: { type: [String], default: [] },
-    dedupe: { type: String, enum: ["none", "once_per_contact", "once_per_day"], default: "none" },
+    dedupe: {
+      type: String,
+      enum: ["none", "once_per_contact", "once_per_day"],
+      default: "none",
+    },
     delayMinutes: { type: Number, default: 0 },
     enabled: { type: Boolean, default: true },
     verified: { type: Boolean, default: false },
@@ -360,10 +419,10 @@ const workflowSchema = new Schema<IWorkflow>(
       delivered: { type: Number, default: 0 },
       read: { type: Number, default: 0 },
       failed: { type: Number, default: 0 },
-      skipped: { type: Number, default: 0 }
-    }
+      skipped: { type: Number, default: 0 },
+    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const Workflow = model<IWorkflow>("Workflow", workflowSchema);
 
@@ -379,18 +438,26 @@ export interface IWorkflowEvent extends Document {
 }
 const workflowEventSchema = new Schema<IWorkflowEvent>(
   {
-    workflow: { type: Schema.Types.ObjectId, ref: "Workflow", required: true, index: true },
+    workflow: {
+      type: Schema.Types.ObjectId,
+      ref: "Workflow",
+      required: true,
+      index: true,
+    },
     contact: { type: Schema.Types.ObjectId, ref: "Contact" },
     waId: { type: String, index: true },
     payload: Schema.Types.Mixed,
     waMessageId: { type: String, index: true },
     status: { type: String, default: "received" },
     error: String,
-    runAt: Date
+    runAt: Date,
   },
-  { timestamps: true }
+  { timestamps: true },
 );
-export const WorkflowEvent = model<IWorkflowEvent>("WorkflowEvent", workflowEventSchema);
+export const WorkflowEvent = model<IWorkflowEvent>(
+  "WorkflowEvent",
+  workflowEventSchema,
+);
 
 // ════════════════════════════════════════════════════════
 // AI ACTIONS — things the AI can DO, not just say.
@@ -438,11 +505,15 @@ const actionFieldSchema = new Schema<IActionField>(
     key: { type: String, required: true },
     label: { type: String, default: "" },
     description: { type: String, default: "" },
-    type: { type: String, enum: ["string", "number", "date", "enum", "boolean"], default: "string" },
+    type: {
+      type: String,
+      enum: ["string", "number", "date", "enum", "boolean"],
+      default: "string",
+    },
     options: { type: [String], default: [] },
-    required: { type: Boolean, default: true }
+    required: { type: Boolean, default: true },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const aiActionSchema = new Schema<IAiAction>(
@@ -451,7 +522,11 @@ const aiActionSchema = new Schema<IAiAction>(
     displayName: { type: String, required: true },
     description: { type: String, required: true },
     triggerExamples: { type: [String], default: [] },
-    audience: { type: String, enum: ["any", "lead", "customer"], default: "any" },
+    audience: {
+      type: String,
+      enum: ["any", "lead", "customer"],
+      default: "any",
+    },
     enabled: { type: Boolean, default: true },
     numbers: { type: [Schema.Types.ObjectId], ref: "WabaNumber", default: [] },
     fields: { type: [actionFieldSchema], default: [] },
@@ -460,7 +535,10 @@ const aiActionSchema = new Schema<IAiAction>(
     webhookHeaders: { type: Map, of: String, default: {} },
     webhookSecret: String,
     payloadTemplate: String,
-    confirmationMessage: { type: String, default: "Done — our team will be in touch shortly." },
+    confirmationMessage: {
+      type: String,
+      default: "Done — our team will be in touch shortly.",
+    },
     addTags: { type: [String], default: [] },
     addLabels: { type: [String], default: [] },
     createsLead: { type: Boolean, default: false },
@@ -469,10 +547,10 @@ const aiActionSchema = new Schema<IAiAction>(
     stats: {
       triggered: { type: Number, default: 0 },
       succeeded: { type: Number, default: 0 },
-      failed: { type: Number, default: 0 }
-    }
+      failed: { type: Number, default: 0 },
+    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const AiAction = model<IAiAction>("AiAction", aiActionSchema);
 
@@ -492,7 +570,12 @@ export interface IActionRun extends Document {
 }
 const actionRunSchema = new Schema<IActionRun>(
   {
-    action: { type: Schema.Types.ObjectId, ref: "AiAction", required: true, index: true },
+    action: {
+      type: Schema.Types.ObjectId,
+      ref: "AiAction",
+      required: true,
+      index: true,
+    },
     actionName: String,
     contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true },
     conversation: { type: Schema.Types.ObjectId, ref: "Conversation" },
@@ -503,9 +586,9 @@ const actionRunSchema = new Schema<IActionRun>(
     responseBody: String,
     status: { type: String, default: "pending", index: true },
     error: String,
-    attempts: { type: Number, default: 0 }
+    attempts: { type: Number, default: 0 },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const ActionRun = model<IActionRun>("ActionRun", actionRunSchema);
 
@@ -524,7 +607,12 @@ export interface ILead extends Document {
 }
 const leadSchema = new Schema<ILead>(
   {
-    contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true, index: true },
+    contact: {
+      type: Schema.Types.ObjectId,
+      ref: "Contact",
+      required: true,
+      index: true,
+    },
     conversation: { type: Schema.Types.ObjectId, ref: "Conversation" },
     number: { type: Schema.Types.ObjectId, ref: "WabaNumber" },
     interest: { type: String, default: "" },
@@ -535,12 +623,12 @@ const leadSchema = new Schema<ILead>(
       type: String,
       enum: ["new", "qualified", "call_booked", "converted", "lost"],
       default: "new",
-      index: true
+      index: true,
     },
     assignedTo: { type: Schema.Types.ObjectId, ref: "User" },
-    note: { type: String, default: "" }
+    note: { type: String, default: "" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const Lead = model<ILead>("Lead", leadSchema);
 
@@ -559,23 +647,32 @@ export interface ITicket extends Document {
 }
 const ticketSchema = new Schema<ITicket>(
   {
-    contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true, index: true },
+    contact: {
+      type: Schema.Types.ObjectId,
+      ref: "Contact",
+      required: true,
+      index: true,
+    },
     conversation: { type: Schema.Types.ObjectId, ref: "Conversation" },
     reference: { type: String, required: true, unique: true },
     subject: { type: String, default: "" },
     detail: { type: String, default: "" },
     category: { type: String, default: "general" },
-    priority: { type: String, enum: ["low", "normal", "high", "urgent"], default: "normal" },
+    priority: {
+      type: String,
+      enum: ["low", "normal", "high", "urgent"],
+      default: "normal",
+    },
     status: {
       type: String,
       enum: ["open", "in_progress", "resolved", "closed"],
       default: "open",
-      index: true
+      index: true,
     },
     externalId: String,
-    assignedTo: { type: Schema.Types.ObjectId, ref: "User" }
+    assignedTo: { type: Schema.Types.ObjectId, ref: "User" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const Ticket = model<ITicket>("Ticket", ticketSchema);
 
@@ -589,15 +686,23 @@ export interface IQualitySnapshot extends Document {
 }
 const qualitySnapshotSchema = new Schema<IQualitySnapshot>(
   {
-    number: { type: Schema.Types.ObjectId, ref: "WabaNumber", required: true, index: true },
+    number: {
+      type: Schema.Types.ObjectId,
+      ref: "WabaNumber",
+      required: true,
+      index: true,
+    },
     qualityRating: String,
     messagingLimit: String,
     status: String,
-    changed: { type: Boolean, default: false }
+    changed: { type: Boolean, default: false },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
-export const QualitySnapshot = model<IQualitySnapshot>("QualitySnapshot", qualitySnapshotSchema);
+export const QualitySnapshot = model<IQualitySnapshot>(
+  "QualitySnapshot",
+  qualitySnapshotSchema,
+);
 
 // ── Alerts (quality degradation, policy events) ─────────
 export interface IAlert extends Document {
@@ -609,13 +714,17 @@ export interface IAlert extends Document {
 }
 const alertSchema = new Schema<IAlert>(
   {
-    level: { type: String, enum: ["info", "warning", "critical"], default: "info" },
+    level: {
+      type: String,
+      enum: ["info", "warning", "critical"],
+      default: "info",
+    },
     title: { type: String, required: true },
     detail: { type: String, default: "" },
     number: { type: Schema.Types.ObjectId, ref: "WabaNumber" },
-    acknowledged: { type: Boolean, default: false }
+    acknowledged: { type: Boolean, default: false },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const Alert = model<IAlert>("Alert", alertSchema);
 
@@ -629,11 +738,14 @@ const knowledgeSchema = new Schema<IKnowledgeDoc>(
   {
     title: { type: String, required: true },
     content: { type: String, required: true },
-    enabled: { type: Boolean, default: true }
+    enabled: { type: Boolean, default: true },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
-export const KnowledgeDoc = model<IKnowledgeDoc>("KnowledgeDoc", knowledgeSchema);
+export const KnowledgeDoc = model<IKnowledgeDoc>(
+  "KnowledgeDoc",
+  knowledgeSchema,
+);
 
 // ── Settings (singleton) ────────────────────────────────
 export interface ISettings extends Document {
@@ -647,7 +759,12 @@ export interface ISettings extends Document {
   optOutKeywords: string[];
   optOutReply: string;
   outsideHoursMessage: string;
-  businessHours: { start: string; end: string; timezone: string; enabled: boolean };
+  businessHours: {
+    start: string;
+    end: string;
+    timezone: string;
+    enabled: boolean;
+  };
   // ── quality guardrails ──
   maxAiRepliesPerHour: number;
   maxReplyChars: number;
@@ -685,26 +802,36 @@ const settingsSchema = new Schema<ISettings>(
     systemPrompt: {
       type: String,
       default:
-        "You are a helpful, warm customer support assistant for our business on WhatsApp. Answer briefly (WhatsApp style, 1-3 short paragraphs max), in the customer's language. If you don't know something, say you'll check with the team. Never invent prices or commitments."
+        "You are a helpful, warm customer support assistant for our business on WhatsApp. Answer briefly (WhatsApp style, 1-3 short paragraphs max), in the customer's language. If you don't know something, say you'll check with the team. Never invent prices or commitments.",
     },
     aiGlobalEnabled: { type: Boolean, default: true },
     aiMaxTokens: { type: Number, default: 500 },
-    handoffKeywords: { type: [String], default: ["talk to human", "agent", "representative"] },
+    handoffKeywords: {
+      type: [String],
+      default: ["talk to human", "agent", "representative"],
+    },
     optOutKeywords: {
       type: [String],
-      default: ["stop", "unsubscribe", "opt out", "optout", "do not message", "band karo"]
+      default: [
+        "stop",
+        "unsubscribe",
+        "opt out",
+        "optout",
+        "do not message",
+        "band karo",
+      ],
     },
     optOutReply: {
       type: String,
       default:
-        "You've been unsubscribed and won't receive further messages from us. Reply START anytime to resume."
+        "You've been unsubscribed and won't receive further messages from us. Reply START anytime to resume.",
     },
     outsideHoursMessage: { type: String, default: "" },
     businessHours: {
       start: { type: String, default: "09:00" },
       end: { type: String, default: "21:00" },
       timezone: { type: String, default: "Asia/Kolkata" },
-      enabled: { type: Boolean, default: false }
+      enabled: { type: Boolean, default: false },
     },
     maxAiRepliesPerHour: { type: Number, default: 20 },
     maxReplyChars: { type: Number, default: 900 },
@@ -720,17 +847,21 @@ const settingsSchema = new Schema<ISettings>(
     escalationMessage: {
       type: String,
       default:
-        "Let me check that with the team and get back to you shortly — I don't want to give you the wrong information."
+        "Let me check that with the team and get back to you shortly — I don't want to give you the wrong information.",
     },
     customerLookupEnabled: { type: Boolean, default: false },
     customerLookupUrl: { type: String, default: "" },
-    customerLookupMethod: { type: String, enum: ["GET", "POST"], default: "GET" },
+    customerLookupMethod: {
+      type: String,
+      enum: ["GET", "POST"],
+      default: "GET",
+    },
     customerLookupHeaders: { type: Map, of: String, default: {} },
     customerLookupCacheMinutes: { type: Number, default: 30 },
     customerFoundPath: { type: String, default: "found" },
-    customerDataPath: { type: String, default: "customer" }
+    customerDataPath: { type: String, default: "customer" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const Settings = model<ISettings>("Settings", settingsSchema);
 
@@ -739,13 +870,15 @@ export const Settings = model<ISettings>("Settings", settingsSchema);
  * Without this, concurrent boots could create two documents and saves would
  * appear to "revert" — you'd write to one and read back the other.
  */
-export const SETTINGS_ID = new mongoose.Types.ObjectId("000000000000000000000001");
+export const SETTINGS_ID = new mongoose.Types.ObjectId(
+  "000000000000000000000001",
+);
 
 export async function getSettings(): Promise<ISettings> {
   const s = await Settings.findOneAndUpdate(
     { _id: SETTINGS_ID },
     { $setOnInsert: { _id: SETTINGS_ID } },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, new: true, setDefaultsOnInsert: true },
   );
   return s as ISettings;
 }
@@ -774,10 +907,19 @@ export async function runMigrations(): Promise<void> {
       .lean();
     if (strays.length) {
       const newest = strays[0];
-      const { _id, createdAt, updatedAt, __v, ...fields } = newest as Record<string, unknown>;
-      await Settings.findOneAndUpdate({ _id: SETTINGS_ID }, { $set: fields }, { upsert: true });
+      const { _id, createdAt, updatedAt, __v, ...fields } = newest as Record<
+        string,
+        unknown
+      >;
+      await Settings.findOneAndUpdate(
+        { _id: SETTINGS_ID },
+        { $set: fields },
+        { upsert: true },
+      );
       await Settings.deleteMany({ _id: { $ne: SETTINGS_ID } });
-      console.log(`[db] consolidated ${strays.length} stray settings document(s) into the singleton`);
+      console.log(
+        `[db] consolidated ${strays.length} stray settings document(s) into the singleton`,
+      );
     }
   } catch (e: any) {
     console.warn("[db] settings migration skipped:", e.message);
