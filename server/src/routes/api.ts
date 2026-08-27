@@ -1423,8 +1423,9 @@ apiRouter.delete("/workflows/:id", async (req, res) => {
 });
 
 apiRouter.post("/workflows/:id/rotate-secret", async (req, res) => {
-  // body: { clear: true } → remove secret, omit/false → generate new secret
-  const newVal = req.body?.clear ? "" : newSecret();
+  // clear=true (body OR query param) → remove secret; otherwise generate new
+  const shouldClear = req.body?.clear === true || req.query.clear === "true";
+  const newVal = shouldClear ? "" : newSecret();
   const w = await Workflow.findByIdAndUpdate(
     req.params.id,
     { $set: { secret: newVal } },
