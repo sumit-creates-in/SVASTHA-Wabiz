@@ -36,7 +36,7 @@ import { syncCustomer } from "../services/customer";
 import * as wa from "../services/whatsapp";
 import { generateReply, classifyConversation } from "../services/ai";
 import { runBroadcast } from "../services/broadcast";
-import { fireWorkflow, newKey, newSecret } from "../services/workflows";
+import { fireWorkflow, newKey } from "../services/workflows";
 import {
   canSendFreeform,
   insideWindow,
@@ -1420,18 +1420,6 @@ apiRouter.delete("/workflows/:id", async (req, res) => {
   await Workflow.deleteOne({ _id: req.params.id });
   await WorkflowEvent.deleteMany({ workflow: req.params.id });
   res.json({ ok: true });
-});
-
-apiRouter.post("/workflows/:id/rotate-secret", async (req, res) => {
-  // clear=true (body OR query param) → remove secret; otherwise generate new
-  const shouldClear = req.body?.clear === true || req.query.clear === "true";
-  const newVal = shouldClear ? "" : newSecret();
-  const w = await Workflow.findByIdAndUpdate(
-    req.params.id,
-    { $set: { secret: newVal } },
-    { new: true },
-  ).lean();
-  res.json(w);
 });
 
 /** Fire a workflow with a sample payload, straight from the dashboard. */

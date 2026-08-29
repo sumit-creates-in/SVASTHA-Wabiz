@@ -7,10 +7,8 @@ import {
   Send,
   BarChart3,
   MoreVertical,
-  RefreshCw,
   CheckCircle2,
   XCircle,
-  X,
   Pencil
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -209,7 +207,7 @@ export default function Workflows() {
                     <button
                       className="btn-secondary text-xs"
                       title="Copy webhook URL"
-                      onClick={() => copy(w.secret ? `${hookUrl(w)}?secret=${w.secret}` : hookUrl(w), w._id)}
+                      onClick={() => copy(hookUrl(w), w._id)}
                     >
                       {copied === w._id ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
                     </button>
@@ -768,9 +766,7 @@ function WorkflowDetail({
       if (key && /\D/.test(key) && !(key in curlPayload)) curlPayload[key] = `<${key}>`;
     });
   });
-  const curl = workflow.secret
-    ? `curl -X POST '${url}' \\\n  -H 'Content-Type: application/json' \\\n  -H 'x-svastha-secret: ${workflow.secret}' \\\n  -d '${JSON.stringify(curlPayload)}'`
-    : `curl -X POST '${url}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${JSON.stringify(curlPayload)}'`;
+  const curl = `curl -X POST '${url}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${JSON.stringify(curlPayload)}'`;
 
   return (
     <Modal title={workflow.name} onClose={onClose} wide>
@@ -783,55 +779,7 @@ function WorkflowDetail({
               <Copy size={14} />
             </button>
           </div>
-          <label className="label mt-3">Secret <span className="text-slate-400 font-normal">(optional — send as header x-svastha-secret or ?secret=)</span></label>
-          <div className="flex gap-2">
-            <input
-              className="input font-mono text-xs"
-              readOnly
-              value={workflow.secret || ""}
-              placeholder="No secret — endpoint is public"
-            />
-            {workflow.secret ? (
-              <>
-                <button
-                  className="btn-secondary shrink-0"
-                  title="Rotate secret"
-                  onClick={async () => {
-                    if (!confirm("Rotate the secret? Existing integrations will stop working until updated.")) return;
-                    await api(`/workflows/${workflow._id}/rotate-secret`, { method: "POST" });
-                    onChanged();
-                    onClose();
-                  }}
-                >
-                  <RefreshCw size={14} />
-                </button>
-                <button
-                  className="btn-secondary shrink-0 text-red-500 hover:text-red-600"
-                  title="Remove secret (make public)"
-                  onClick={async () => {
-                    if (!confirm("Remove secret? The endpoint will become public — anyone with the URL can trigger it.")) return;
-                    await api(`/workflows/${workflow._id}/rotate-secret`, { method: "POST", body: JSON.stringify({ clear: true }) });
-                    onChanged();
-                    onClose();
-                  }}
-                >
-                  <X size={14} />
-                </button>
-              </>
-            ) : (
-              <button
-                className="btn-secondary shrink-0"
-                title="Generate a secret"
-                onClick={async () => {
-                  await api(`/workflows/${workflow._id}/rotate-secret`, { method: "POST" });
-                  onChanged();
-                  onClose();
-                }}
-              >
-                <RefreshCw size={14} />
-              </button>
-            )}
-          </div>
+
         </div>
 
         <div>
