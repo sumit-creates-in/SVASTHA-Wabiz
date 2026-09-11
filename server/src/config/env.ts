@@ -27,4 +27,18 @@ export const env = {
     anthropicKey: e.ANTHROPIC_API_KEY || "",
     openaiKey: e.OPENAI_API_KEY || "",
   },
+  /**
+   * The shared brain. When url and apiKey are set, identity, voice, guardrails, the
+   * programme catalogue, the FAQ and the qualification rules all come from the published
+   * brain instead of Settings.systemPrompt and the Knowledge documents — the same version
+   * BotPlus and the Instagram bot are running.
+   *
+   * Leave them blank and nothing changes: the dashboard's own prompt and knowledge base
+   * are used exactly as before.
+   */
+  brain: {
+    url: e.BRAIN_URL || "",
+    apiKey: e.BRAIN_API_KEY || "",
+    channel: e.BRAIN_CHANNEL || "whatsapp_business",
+  },
 };

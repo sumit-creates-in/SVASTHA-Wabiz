@@ -10,6 +10,7 @@ import {
 import { ESCALATE_TOKEN, POLICY_PROMPT, sanitizeReply } from "./compliance";
 import { actionsFor, toToolSchema, toOpenAiTool } from "./actions";
 import { customerContextBlock } from "./customer";
+import { getBrain, renderBrainPrompt } from "./brain";
 import { Types } from "mongoose";
 
 interface ChatTurn {
@@ -88,10 +89,26 @@ async function buildSystemPrompt(
   contact?: IContact | null,
 ): Promise<string> {
   const settings = await getSettings();
-  const docs = await KnowledgeDoc.find({ enabled: true }).lean();
-  let prompt = number?.systemPromptOverride?.trim() || settings.systemPrompt;
+  const brain = getBrain();
 
-  prompt += dateContextBlock();
+  // The shared brain wins when it is available: identity, voice, guardrails, the
+  // programme catalogue, the FAQ and the qualification rules then match BotPlus and the
+  // Instagram bot exactly, and it already carries today's date and the knowledge base.
+  // A per-number persona override still applies on top. If the brain has never been
+  // reached we fall back to the dashboard's own prompt and Knowledge documents, so
+  // WhatsApp keeps being answered either way.
+  let prompt: string;
+  let docs: Array<{ title: string; content: string }> = [];
+
+  if (brain) {
+    prompt = renderBrainPrompt(brain);
+    const override = number?.systemPromptOverride?.trim();
+    if (override) prompt += `\n\n## This number's own instructions\n${override}`;
+  } else {
+    docs = await KnowledgeDoc.find({ enabled: true }).lean();
+    prompt = number?.systemPromptOverride?.trim() || settings.systemPrompt;
+    prompt += dateContextBlock();
+  }
 
   // Where they came from — a click-to-WhatsApp ad tells us what they're after.
   if (contact) prompt += referralContextBlock(contact);
@@ -278,6 +295,27 @@ async function callOpenAI(
 }
 
 /**
+ * Which model to run. The brain pins provider, model and max tokens so all three Svastha
+ * bots answer with the same one; without it we fall back to the dashboard's AI settings.
+ */
+function resolveModel(settings: {
+  aiProvider: string;
+  aiModel: string;
+  aiMaxTokens: number;
+}): { provider: "openai" | "claude"; model: string; maxTokens: number } {
+  const brain = getBrain();
+  if (brain) {
+    const provider = brain.provider === "openai" ? "openai" : "claude";
+    return { provider, model: brain.model, maxTokens: brain.maxTokens };
+  }
+  return {
+    provider: settings.aiProvider === "openai" ? "openai" : "claude",
+    model: settings.aiModel,
+    maxTokens: settings.aiMaxTokens,
+  };
+}
+
+/**
  * Decide what to do with this turn: reply in text, or call one of the
  * configured actions (book a call, raise a ticket, etc.).
  */
@@ -294,16 +332,15 @@ export async function decide(
 
     const actions = number && contact ? await actionsFor(number, contact) : [];
 
-    if (settings.aiProvider === "openai") {
+    const chosen = resolveModel(settings);
+
+    if (chosen.provider === "openai") {
       if (!env.ai.openaiKey) throw new Error("OPENAI_API_KEY not set");
-      const model = settings.aiModel.startsWith("gpt")
-        ? settings.aiModel
-        : "gpt-4o-mini";
       const decision = await callOpenAI(
         system,
         turns,
-        model,
-        settings.aiMaxTokens,
+        chosen.model,
+        chosen.maxTokens,
         actions.map(toOpenAiTool),
       );
       if (decision.kind === "text")
@@ -312,14 +349,11 @@ export async function decide(
     }
 
     if (!env.ai.anthropicKey) throw new Error("ANTHROPIC_API_KEY not set");
-    const model = settings.aiModel.startsWith("claude")
-      ? settings.aiModel
-      : "claude-sonnet-5";
     const decision = await callClaude(
       system,
       turns,
-      model,
-      settings.aiMaxTokens,
+      chosen.model,
+      chosen.maxTokens,
       actions.map(toToolSchema),
     );
     if (decision.kind === "text")
@@ -388,15 +422,14 @@ RETURN THE MARKER ${FOLLOWUP_SKIP} AND NOTHING ELSE IF:
 Chasing someone who has already declined gets our number blocked and reported. When in doubt, skip.
 Never mention that this is an automated follow-up. Never apologise for messaging again. Do not open with "Just following up".`;
 
+    const chosen = resolveModel(settings);
     let raw: string;
-    if (settings.aiProvider === "openai" && env.ai.openaiKey) {
-      const model = settings.aiModel.startsWith("gpt") ? settings.aiModel : "gpt-4o-mini";
-      const d = await callOpenAI(system, turns, model, 300);
+    if (chosen.provider === "openai" && env.ai.openaiKey) {
+      const d = await callOpenAI(system, turns, chosen.model, 300);
       raw = d.text || "";
     } else {
       if (!env.ai.anthropicKey) return FOLLOWUP_SKIP;
-      const model = settings.aiModel.startsWith("claude") ? settings.aiModel : "claude-sonnet-5";
-      const d = await callClaude(system, turns, model, 300);
+      const d = await callClaude(system, turns, chosen.model, 300);
       raw = d.text || "";
     }
 

@@ -17,6 +17,7 @@ import { startHealthSync } from "./services/whatsapp";
 import { runMigrations } from "./models";
 import { seedNumberFromEnv } from "./routes/auth";
 import { seedRecommendedSetup } from "./seed";
+import { startBrain, brainStatus } from "./services/brain";
 
 async function main() {
   const app = express();
@@ -32,7 +33,9 @@ async function main() {
   );
   app.use(express.urlencoded({ extended: true }));
 
-  app.get("/api/health", (_req, res) => res.json({ ok: true, name: "SVASTHA WABIZ" }));
+  app.get("/api/health", (_req, res) =>
+    res.json({ ok: true, name: "SVASTHA WABIZ", brain: brainStatus() })
+  );
   app.use("/api/webhook", webhookRouter); // Meta → us
   app.use("/api/hooks", hooksRouter); // your apps → us (workflow triggers)
   app.use("/api/auth", authRouter);
@@ -54,6 +57,7 @@ async function main() {
   await ensureAdmin();
   await seedNumberFromEnv();
   await seedRecommendedSetup();
+  await startBrain();
   startScheduler();
   startWorkflowScheduler();
   startFollowUpScheduler();
