@@ -60,6 +60,11 @@ export interface Contact {
   isCustomer?: boolean;
   externalId?: string;
   customerData?: Record<string, string>;
+  attributes?: Record<string, string>;
+  source?: string;
+  notes?: string;
+  importBatch?: string;
+  updatedAt?: string;
   referral?: {
     sourceId?: string;
     sourceType?: string;

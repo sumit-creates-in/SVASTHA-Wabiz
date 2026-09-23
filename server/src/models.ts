@@ -128,6 +128,12 @@ export interface IContact extends Document {
     ctwaClid?: string;
     capturedAt?: Date;
   };
+  /** How the contact got here: whatsapp, import, manual, workflow. */
+  source: string;
+  /** Free-text notes visible to the team. */
+  notes: string;
+  /** Identifies which import created/updated the contact. */
+  importBatch?: string;
 }
 const contactSchema = new Schema<IContact>(
   {
@@ -157,9 +163,14 @@ const contactSchema = new Schema<IContact>(
       ctwaClid: String,
       capturedAt: Date,
     },
+    source: { type: String, default: "whatsapp", index: true },
+    notes: { type: String, default: "" },
+    importBatch: { type: String, index: true },
   },
   { timestamps: true },
 );
+contactSchema.index({ name: 1 });
+contactSchema.index({ createdAt: -1 });
 export const Contact = model<IContact>("Contact", contactSchema);
 
 // ── Conversation ────────────────────────────────────────

@@ -31,6 +31,7 @@ import {
   Viewer,
 } from "../permissions";
 import { requirePermission } from "../middleware/auth";
+import { contactsRouter } from "./contacts";
 import { runAction, retryRun } from "../services/actions";
 import { syncCustomer } from "../services/customer";
 import * as wa from "../services/whatsapp";
@@ -1122,76 +1123,9 @@ apiRouter.post("/contacts/:id/refresh-customer", async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
-// CONTACTS
+// CONTACTS — see routes/contacts.ts
 // ════════════════════════════════════════════════════════
-apiRouter.get("/contacts", async (req: AuthedRequest, res) => {
-  const viewer = req.viewer!;
-  const search = String(req.query.search || "").trim();
-  const tag = String(req.query.tag || "").trim();
-  const q: Record<string, unknown> = {};
-  if (search)
-    q.$or = [{ name: new RegExp(search, "i") }, { waId: new RegExp(search) }];
-  if (tag) q.tags = tag;
-  const items = await Contact.find(q).sort({ updatedAt: -1 }).limit(500).lean();
-  res.json(items.map((c) => maskContact(c as any, viewer)));
-});
-
-apiRouter.post("/contacts", async (req, res) => {
-  const { waId, name, tags, email } = req.body || {};
-  if (!waId) {
-    res.status(400).json({ error: "waId (phone) required" });
-    return;
-  }
-  const c = await Contact.findOneAndUpdate(
-    { waId: String(waId).replace(/[^0-9]/g, "") },
-    { $set: { name: name || "", tags: tags || [], email } },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
-  );
-  res.json(c);
-});
-
-apiRouter.patch("/contacts/:id", async (req, res) => {
-  const allowed: Record<string, unknown> = {};
-  for (const k of [
-    "name",
-    "tags",
-    "optedOut",
-    "attributes",
-    "email",
-  ] as const) {
-    if (k in (req.body || {})) allowed[k] = req.body[k];
-  }
-  const c = await Contact.findByIdAndUpdate(
-    req.params.id,
-    { $set: allowed },
-    { new: true },
-  ).lean();
-  res.json(c);
-});
-
-apiRouter.delete("/contacts/:id", async (req, res) => {
-  await Contact.deleteOne({ _id: req.params.id });
-  res.json({ ok: true });
-});
-
-apiRouter.post("/contacts/import", async (req, res) => {
-  const rows: any[] = Array.isArray(req.body) ? req.body : req.body?.rows || [];
-  let imported = 0;
-  for (const r of rows) {
-    const waId = String(r.waId || r.phone || "").replace(/[^0-9]/g, "");
-    if (!waId) continue;
-    await Contact.findOneAndUpdate(
-      { waId },
-      {
-        $set: { name: r.name || "" },
-        $addToSet: { tags: { $each: r.tags || [] } },
-      },
-      { upsert: true, setDefaultsOnInsert: true },
-    );
-    imported++;
-  }
-  res.json({ imported });
-});
+apiRouter.use("/contacts", contactsRouter);
 
 // ════════════════════════════════════════════════════════
 // TEMPLATES
