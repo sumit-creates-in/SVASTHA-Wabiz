@@ -32,11 +32,11 @@ import {
 } from "../permissions";
 import { requirePermission } from "../middleware/auth";
 import { contactsRouter } from "./contacts";
+import { broadcastsRouter } from "./broadcasts";
 import { runAction, retryRun } from "../services/actions";
 import { syncCustomer } from "../services/customer";
 import * as wa from "../services/whatsapp";
 import { generateReply, classifyConversation } from "../services/ai";
-import { runBroadcast } from "../services/broadcast";
 import { fireWorkflow, newKey } from "../services/workflows";
 import {
   canSendFreeform,
@@ -1221,64 +1221,9 @@ apiRouter.post("/templates", async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
-// BROADCASTS
+// BROADCASTS — see routes/broadcasts.ts
 // ════════════════════════════════════════════════════════
-apiRouter.get("/broadcasts", async (_req, res) => {
-  res.json(
-    await Broadcast.find()
-      .sort({ createdAt: -1 })
-      .populate("number", "label displayPhoneNumber")
-      .lean(),
-  );
-});
-
-apiRouter.post("/broadcasts", async (req, res) => {
-  const {
-    name,
-    templateName,
-    templateLanguage,
-    bodyParams,
-    audienceTags,
-    scheduledAt,
-    number,
-  } = req.body || {};
-  if (!name || !templateName) {
-    res.status(400).json({ error: "name and templateName required" });
-    return;
-  }
-  const b = await Broadcast.create({
-    name,
-    number: number || undefined,
-    templateName,
-    templateLanguage: templateLanguage || "en",
-    bodyParams: bodyParams || [],
-    audienceTags: audienceTags || [],
-    scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
-    status: scheduledAt ? "scheduled" : "draft",
-  });
-  res.json(b);
-});
-
-apiRouter.post("/broadcasts/:id/send", async (req, res) => {
-  runBroadcast(req.params.id).catch((e) =>
-    console.error("[broadcast]", e.message),
-  );
-  res.json({ ok: true, started: true });
-});
-
-apiRouter.post("/broadcasts/:id/cancel", async (req, res) => {
-  const b = await Broadcast.findByIdAndUpdate(
-    req.params.id,
-    { $set: { status: "cancelled" } },
-    { new: true },
-  ).lean();
-  res.json(b);
-});
-
-apiRouter.delete("/broadcasts/:id", async (req, res) => {
-  await Broadcast.deleteOne({ _id: req.params.id });
-  res.json({ ok: true });
-});
+apiRouter.use("/broadcasts", broadcastsRouter);
 
 // ════════════════════════════════════════════════════════
 // WEBHOOK WORKFLOWS

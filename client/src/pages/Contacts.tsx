@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Plus,
   Upload,
@@ -64,6 +64,8 @@ export default function Contacts() {
   const canEdit = can("contacts.edit");
   const canExport = can("contacts.export");
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const canBroadcast = can("broadcasts.send");
 
   const [data, setData] = useState<ListResponse | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -439,6 +441,20 @@ export default function Contacts() {
                 </>
               )}
             </>
+          )}
+          {canBroadcast && (
+            <BarButton
+              onClick={() => {
+                if (allMatching) {
+                  if (tag && !debounced && !status) navigate(`/broadcasts/new?tag=${encodeURIComponent(tag)}`);
+                  else flash("To broadcast to everyone matching, filter by a tag — or select contacts on this page.");
+                  return;
+                }
+                navigate(`/broadcasts/new?contacts=${Array.from(selected).join(",")}`);
+              }}
+            >
+              <Megaphone size={13} /> Broadcast
+            </BarButton>
           )}
           {canExport && (
             <BarButton onClick={() => exportAs("xlsx")}>
