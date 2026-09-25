@@ -60,11 +60,6 @@ export interface Contact {
   isCustomer?: boolean;
   externalId?: string;
   customerData?: Record<string, string>;
-  attributes?: Record<string, string>;
-  source?: string;
-  notes?: string;
-  importBatch?: string;
-  updatedAt?: string;
   referral?: {
     sourceId?: string;
     sourceType?: string;
@@ -256,94 +251,20 @@ export interface Template {
   category: string;
   status: string;
   bodyText: string;
-  headerText?: string;
   variableCount: number;
-  components?: any[];
 }
-
-export interface BroadcastVariable {
-  source: "static" | "name" | "firstName" | "phone" | "email" | "attribute";
-  value: string;
-  fallback: string;
-}
-
-export interface BroadcastAudience {
-  includeTags: string[];
-  tagMatch: "any" | "all";
-  excludeTags: string[];
-  contactType: "" | "lead" | "customer" | "fromAd";
-  activeWithinDays: number;
-  skipRecentlyBroadcastDays: number;
-  contactIds: string[];
-  retargetBroadcast?: string | { _id: string; name: string };
-  retargetStatuses: string[];
-}
-
-export interface BroadcastStats {
-  total: number;
-  pending: number;
-  sent: number;
-  delivered: number;
-  read: number;
-  replied: number;
-  failed: number;
-  skipped: number;
-}
-
-export type BroadcastStatus =
-  | "draft"
-  | "scheduled"
-  | "preparing"
-  | "running"
-  | "paused"
-  | "completed"
-  | "failed"
-  | "cancelled";
 
 export interface Broadcast {
   _id: string;
   name: string;
-  description?: string;
-  number?: { _id: string; label: string; displayPhoneNumber: string; messagingLimit?: string; qualityRating?: string } | string;
   templateName: string;
   templateLanguage: string;
-  templateCategory?: string;
   bodyParams: string[];
-  bodyVariables: BroadcastVariable[];
-  headerVariables: BroadcastVariable[];
-  buttonVariable?: BroadcastVariable;
-  headerMedia?: { type: "image" | "video" | "document"; link: string; filename?: string };
   audienceTags: string[];
-  audience: BroadcastAudience;
-  speed: "safe" | "normal" | "fast";
   scheduledAt?: string;
-  startedAt?: string;
-  completedAt?: string;
-  status: BroadcastStatus;
-  lastError?: string;
-  createdBy?: { name: string };
-  stats: BroadcastStats;
-  createdAt: string;
-}
-
-export interface AudienceEstimate {
-  total: number;
-  excludedOptedOut: number;
-  excludedInvalid: number;
-  excludedRecent: number;
-  warnings: string[];
-}
-
-export interface BroadcastRecipient {
-  _id: string;
-  waId: string;
-  name?: string;
   status: string;
-  error?: string;
-  sentAt?: string;
-  deliveredAt?: string;
-  readAt?: string;
-  repliedAt?: string;
+  stats: { total: number; sent: number; delivered: number; read: number; failed: number; skipped: number };
+  createdAt: string;
 }
 
 export interface Workflow {

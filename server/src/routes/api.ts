@@ -31,12 +31,11 @@ import {
   Viewer,
 } from "../permissions";
 import { requirePermission } from "../middleware/auth";
-import { contactsRouter } from "./contacts";
-import { broadcastsRouter } from "./broadcasts";
 import { runAction, retryRun } from "../services/actions";
 import { syncCustomer } from "../services/customer";
 import * as wa from "../services/whatsapp";
 import { generateReply, classifyConversation } from "../services/ai";
+import { runBroadcast } from "../services/broadcast";
 import { fireWorkflow, newKey } from "../services/workflows";
 import {
   canSendFreeform,
@@ -1123,9 +1122,76 @@ apiRouter.post("/contacts/:id/refresh-customer", async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
-// CONTACTS — see routes/contacts.ts
+// CONTACTS
 // ════════════════════════════════════════════════════════
-apiRouter.use("/contacts", contactsRouter);
+apiRouter.get("/contacts", async (req: AuthedRequest, res) => {
+  const viewer = req.viewer!;
+  const search = String(req.query.search || "").trim();
+  const tag = String(req.query.tag || "").trim();
+  const q: Record<string, unknown> = {};
+  if (search)
+    q.$or = [{ name: new RegExp(search, "i") }, { waId: new RegExp(search) }];
+  if (tag) q.tags = tag;
+  const items = await Contact.find(q).sort({ updatedAt: -1 }).limit(500).lean();
+  res.json(items.map((c) => maskContact(c as any, viewer)));
+});
+
+apiRouter.post("/contacts", async (req, res) => {
+  const { waId, name, tags, email } = req.body || {};
+  if (!waId) {
+    res.status(400).json({ error: "waId (phone) required" });
+    return;
+  }
+  const c = await Contact.findOneAndUpdate(
+    { waId: String(waId).replace(/[^0-9]/g, "") },
+    { $set: { name: name || "", tags: tags || [], email } },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+  res.json(c);
+});
+
+apiRouter.patch("/contacts/:id", async (req, res) => {
+  const allowed: Record<string, unknown> = {};
+  for (const k of [
+    "name",
+    "tags",
+    "optedOut",
+    "attributes",
+    "email",
+  ] as const) {
+    if (k in (req.body || {})) allowed[k] = req.body[k];
+  }
+  const c = await Contact.findByIdAndUpdate(
+    req.params.id,
+    { $set: allowed },
+    { new: true },
+  ).lean();
+  res.json(c);
+});
+
+apiRouter.delete("/contacts/:id", async (req, res) => {
+  await Contact.deleteOne({ _id: req.params.id });
+  res.json({ ok: true });
+});
+
+apiRouter.post("/contacts/import", async (req, res) => {
+  const rows: any[] = Array.isArray(req.body) ? req.body : req.body?.rows || [];
+  let imported = 0;
+  for (const r of rows) {
+    const waId = String(r.waId || r.phone || "").replace(/[^0-9]/g, "");
+    if (!waId) continue;
+    await Contact.findOneAndUpdate(
+      { waId },
+      {
+        $set: { name: r.name || "" },
+        $addToSet: { tags: { $each: r.tags || [] } },
+      },
+      { upsert: true, setDefaultsOnInsert: true },
+    );
+    imported++;
+  }
+  res.json({ imported });
+});
 
 // ════════════════════════════════════════════════════════
 // TEMPLATES
@@ -1221,9 +1287,64 @@ apiRouter.post("/templates", async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
-// BROADCASTS — see routes/broadcasts.ts
+// BROADCASTS
 // ════════════════════════════════════════════════════════
-apiRouter.use("/broadcasts", broadcastsRouter);
+apiRouter.get("/broadcasts", async (_req, res) => {
+  res.json(
+    await Broadcast.find()
+      .sort({ createdAt: -1 })
+      .populate("number", "label displayPhoneNumber")
+      .lean(),
+  );
+});
+
+apiRouter.post("/broadcasts", async (req, res) => {
+  const {
+    name,
+    templateName,
+    templateLanguage,
+    bodyParams,
+    audienceTags,
+    scheduledAt,
+    number,
+  } = req.body || {};
+  if (!name || !templateName) {
+    res.status(400).json({ error: "name and templateName required" });
+    return;
+  }
+  const b = await Broadcast.create({
+    name,
+    number: number || undefined,
+    templateName,
+    templateLanguage: templateLanguage || "en",
+    bodyParams: bodyParams || [],
+    audienceTags: audienceTags || [],
+    scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
+    status: scheduledAt ? "scheduled" : "draft",
+  });
+  res.json(b);
+});
+
+apiRouter.post("/broadcasts/:id/send", async (req, res) => {
+  runBroadcast(req.params.id).catch((e) =>
+    console.error("[broadcast]", e.message),
+  );
+  res.json({ ok: true, started: true });
+});
+
+apiRouter.post("/broadcasts/:id/cancel", async (req, res) => {
+  const b = await Broadcast.findByIdAndUpdate(
+    req.params.id,
+    { $set: { status: "cancelled" } },
+    { new: true },
+  ).lean();
+  res.json(b);
+});
+
+apiRouter.delete("/broadcasts/:id", async (req, res) => {
+  await Broadcast.deleteOne({ _id: req.params.id });
+  res.json({ ok: true });
+});
 
 // ════════════════════════════════════════════════════════
 // WEBHOOK WORKFLOWS

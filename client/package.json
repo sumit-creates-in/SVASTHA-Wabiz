@@ -10,16 +10,12 @@
   },
   "dependencies": {
     "lucide-react": "^0.469.0",
-    "papaparse": "^5.7.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.1",
-    "read-excel-file": "^9.3.10",
-    "socket.io-client": "^4.8.1",
-    "write-excel-file": "^4.1.1"
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
-    "@types/papaparse": "^5.5.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",

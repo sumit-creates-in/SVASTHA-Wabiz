@@ -25,7 +25,7 @@ async function main() {
   app.use(cors());
   app.use(
     express.json({
-      limit: "25mb",
+      limit: "5mb",
       verify: (req, _res, buf) => {
         (req as any).rawBody = buf;
       }

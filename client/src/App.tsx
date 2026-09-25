@@ -1,4 +1,3 @@
-import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, NavLink, useNavigate } from "react-router-dom";
 import {
   MessageSquare,
@@ -26,8 +25,6 @@ import Dashboard from "./pages/Dashboard";
 import Inbox from "./pages/Inbox";
 import Contacts from "./pages/Contacts";
 import Broadcasts from "./pages/Broadcasts";
-const BroadcastBuilder = lazy(() => import("./pages/BroadcastBuilder"));
-const BroadcastReport = lazy(() => import("./pages/BroadcastReport"));
 import Templates from "./pages/Templates";
 import Knowledge from "./pages/Knowledge";
 import SettingsPage from "./pages/Settings";
@@ -158,9 +155,6 @@ function AppRoutes() {
       <Route path="/numbers" element={<Protected perm="numbers.view"><Numbers /></Protected>} />
       <Route path="/workflows" element={<Protected perm="workflows.view"><WorkflowsPage /></Protected>} />
       <Route path="/broadcasts" element={<Protected perm="broadcasts.view"><Broadcasts /></Protected>} />
-      <Route path="/broadcasts/new" element={<Protected perm="broadcasts.send"><Suspense fallback={null}><BroadcastBuilder /></Suspense></Protected>} />
-      <Route path="/broadcasts/:id/edit" element={<Protected perm="broadcasts.send"><Suspense fallback={null}><BroadcastBuilder /></Suspense></Protected>} />
-      <Route path="/broadcasts/:id" element={<Protected perm="broadcasts.view"><Suspense fallback={null}><BroadcastReport /></Suspense></Protected>} />
       <Route path="/templates" element={<Protected perm="templates.view"><Templates /></Protected>} />
       <Route path="/knowledge" element={<Protected perm="knowledge.view"><Knowledge /></Protected>} />
       <Route path="/team" element={<Protected perm="team.manage"><Team /></Protected>} />

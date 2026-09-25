@@ -128,12 +128,6 @@ export interface IContact extends Document {
     ctwaClid?: string;
     capturedAt?: Date;
   };
-  /** How the contact got here: whatsapp, import, manual, workflow. */
-  source: string;
-  /** Free-text notes visible to the team. */
-  notes: string;
-  /** Identifies which import created/updated the contact. */
-  importBatch?: string;
 }
 const contactSchema = new Schema<IContact>(
   {
@@ -163,14 +157,9 @@ const contactSchema = new Schema<IContact>(
       ctwaClid: String,
       capturedAt: Date,
     },
-    source: { type: String, default: "whatsapp", index: true },
-    notes: { type: String, default: "" },
-    importBatch: { type: String, index: true },
   },
   { timestamps: true },
 );
-contactSchema.index({ name: 1 });
-contactSchema.index({ createdAt: -1 });
 export const Contact = model<IContact>("Contact", contactSchema);
 
 // ── Conversation ────────────────────────────────────────
@@ -310,130 +299,45 @@ templateSchema.index({ name: 1, language: 1 }, { unique: true });
 export const Template = model<ITemplate>("Template", templateSchema);
 
 // ── Broadcast campaign ──────────────────────────────────
-/** Where a template variable's value comes from, per recipient. */
-export interface IBroadcastVariable {
-  source: "static" | "name" | "firstName" | "phone" | "email" | "attribute";
-  value: string; // static text, or attribute key when source = attribute
-  fallback: string; // used when the contact has no value for this field
-}
-
-export interface IBroadcastAudience {
-  includeTags: string[];
-  tagMatch: "any" | "all";
-  excludeTags: string[];
-  contactType: "" | "lead" | "customer" | "fromAd";
-  /** Only contacts who messaged us within this many days (0 = off). */
-  activeWithinDays: number;
-  /** Skip contacts who received any broadcast in the last N days (0 = off). */
-  skipRecentlyBroadcastDays: number;
-  /** Explicit contact list (e.g. picked in Contacts). */
-  contactIds: Types.ObjectId[];
-  /** Retarget people from an earlier campaign by what they did. */
-  retargetBroadcast?: Types.ObjectId;
-  retargetStatuses: string[];
-}
-
-export type BroadcastStatus =
-  | "draft"
-  | "scheduled"
-  | "preparing"
-  | "running"
-  | "paused"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
 export interface IBroadcast extends Document {
   name: string;
-  description: string;
   number?: Types.ObjectId;
   templateName: string;
   templateLanguage: string;
-  templateCategory: string;
-  /** Legacy fixed-text params — still honoured if no variables are set. */
   bodyParams: string[];
-  bodyVariables: IBroadcastVariable[];
-  headerVariables: IBroadcastVariable[];
-  buttonVariable?: IBroadcastVariable;
-  headerMedia?: { type: "image" | "video" | "document"; link: string; filename?: string };
-  /** Legacy tag audience — mapped onto audience.includeTags. */
   audienceTags: string[];
-  audience: IBroadcastAudience;
-  speed: "safe" | "normal" | "fast";
   scheduledAt?: Date;
-  startedAt?: Date;
-  completedAt?: Date;
-  status: BroadcastStatus;
-  lastError?: string;
-  createdBy?: Types.ObjectId;
+  status:
+    | "draft"
+    | "scheduled"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled";
   stats: {
     total: number;
-    pending: number;
     sent: number;
     delivered: number;
     read: number;
-    replied: number;
     failed: number;
     skipped: number;
   };
 }
-
-const variableSchema = new Schema<IBroadcastVariable>(
-  {
-    source: {
-      type: String,
-      enum: ["static", "name", "firstName", "phone", "email", "attribute"],
-      default: "static",
-    },
-    value: { type: String, default: "" },
-    fallback: { type: String, default: "" },
-  },
-  { _id: false },
-);
-
 const broadcastSchema = new Schema<IBroadcast>(
   {
     name: { type: String, required: true },
-    description: { type: String, default: "" },
     number: { type: Schema.Types.ObjectId, ref: "WabaNumber" },
     templateName: { type: String, required: true },
     templateLanguage: { type: String, default: "en" },
-    templateCategory: { type: String, default: "" },
     bodyParams: { type: [String], default: [] },
-    bodyVariables: { type: [variableSchema], default: [] },
-    headerVariables: { type: [variableSchema], default: [] },
-    buttonVariable: { type: variableSchema, default: undefined },
-    headerMedia: {
-      type: { type: String, enum: ["image", "video", "document"] },
-      link: String,
-      filename: String,
-    },
     audienceTags: { type: [String], default: [] },
-    audience: {
-      includeTags: { type: [String], default: [] },
-      tagMatch: { type: String, enum: ["any", "all"], default: "any" },
-      excludeTags: { type: [String], default: [] },
-      contactType: { type: String, default: "" },
-      activeWithinDays: { type: Number, default: 0 },
-      skipRecentlyBroadcastDays: { type: Number, default: 0 },
-      contactIds: { type: [Schema.Types.ObjectId], ref: "Contact", default: [] },
-      retargetBroadcast: { type: Schema.Types.ObjectId, ref: "Broadcast" },
-      retargetStatuses: { type: [String], default: [] },
-    },
-    speed: { type: String, enum: ["safe", "normal", "fast"], default: "normal" },
     scheduledAt: Date,
-    startedAt: Date,
-    completedAt: Date,
-    status: { type: String, default: "draft", index: true },
-    lastError: String,
-    createdBy: { type: Schema.Types.ObjectId, ref: "User" },
+    status: { type: String, default: "draft" },
     stats: {
       total: { type: Number, default: 0 },
-      pending: { type: Number, default: 0 },
       sent: { type: Number, default: 0 },
       delivered: { type: Number, default: 0 },
       read: { type: Number, default: 0 },
-      replied: { type: Number, default: 0 },
       failed: { type: Number, default: 0 },
       skipped: { type: Number, default: 0 },
     },
@@ -442,28 +346,12 @@ const broadcastSchema = new Schema<IBroadcast>(
 );
 export const Broadcast = model<IBroadcast>("Broadcast", broadcastSchema);
 
-export type RecipientStatus =
-  | "pending"
-  | "sent"
-  | "delivered"
-  | "read"
-  | "replied"
-  | "failed"
-  | "skipped";
-
 export interface IBroadcastRecipient extends Document {
   broadcast: Types.ObjectId;
   contact: Types.ObjectId;
-  waId?: string;
-  name?: string;
   waMessageId?: string;
-  status: RecipientStatus;
+  status: "pending" | "sent" | "delivered" | "read" | "failed" | "skipped";
   error?: string;
-  errorCode?: number;
-  sentAt?: Date;
-  deliveredAt?: Date;
-  readAt?: Date;
-  repliedAt?: Date;
 }
 const broadcastRecipientSchema = new Schema<IBroadcastRecipient>(
   {
@@ -474,21 +362,12 @@ const broadcastRecipientSchema = new Schema<IBroadcastRecipient>(
       index: true,
     },
     contact: { type: Schema.Types.ObjectId, ref: "Contact", required: true },
-    waId: String,
-    name: String,
     waMessageId: { type: String, index: true },
     status: { type: String, default: "pending" },
     error: String,
-    errorCode: Number,
-    sentAt: Date,
-    deliveredAt: Date,
-    readAt: Date,
-    repliedAt: Date,
   },
   { timestamps: true },
 );
-broadcastRecipientSchema.index({ broadcast: 1, status: 1 });
-broadcastRecipientSchema.index({ contact: 1, sentAt: -1 });
 export const BroadcastRecipient = model<IBroadcastRecipient>(
   "BroadcastRecipient",
   broadcastRecipientSchema,

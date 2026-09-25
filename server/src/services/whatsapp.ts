@@ -66,17 +66,9 @@ export function sendTemplate(
   headerParams: string[] = [],
   buttonUrlParam?: string,
   category?: string,
-  headerMedia?: { type: "image" | "video" | "document"; link: string; filename?: string },
 ): Promise<SendResult> {
   const components: Record<string, unknown>[] = [];
-  if (headerMedia?.link) {
-    const media: Record<string, string> = { link: headerMedia.link };
-    if (headerMedia.type === "document" && headerMedia.filename) media.filename = headerMedia.filename;
-    components.push({
-      type: "header",
-      parameters: [{ type: headerMedia.type, [headerMedia.type]: media }],
-    });
-  } else if (headerParams.length)
+  if (headerParams.length)
     components.push({
       type: "header",
       parameters: headerParams.map((t) => ({ type: "text", text: t })),
@@ -393,18 +385,12 @@ async function recordQuality(
   // Circuit breaker: stop non-essential outbound before Meta cuts the tier.
   if (settings.autoPauseMarketingOnDegrade && critical) {
     const { Broadcast } = await import("../models");
-    // Paused rather than cancelled, so nothing is lost: resume once quality recovers.
-    const reason = `Paused automatically — ${num.displayPhoneNumber || num.label} quality dropped to RED`;
     await Broadcast.updateMany(
-      { status: "running" },
-      { $set: { status: "paused", lastError: reason } },
-    );
-    await Broadcast.updateMany(
-      { status: "scheduled" },
-      { $set: { status: "draft", lastError: reason }, $unset: { scheduledAt: 1 } },
+      { status: { $in: ["running", "scheduled"] } },
+      { $set: { status: "cancelled" } },
     );
     console.warn(
-      `[quality] ${num.displayPhoneNumber} went RED — running broadcasts paused, scheduled ones unscheduled`,
+      `[quality] ${num.displayPhoneNumber} went RED — running broadcasts cancelled`,
     );
   }
 }

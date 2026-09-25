@@ -12,7 +12,6 @@ import { AiAction } from "../models";
 import { runAction } from "./actions";
 import { syncCustomer } from "./customer";
 import { scheduleFollowUps, cancelFollowUps } from "./followups";
-import { applyRecipientStatus, recordBroadcastReply } from "./broadcast";
 import { emit } from "../realtime";
 import {
   canSendFreeform,
@@ -163,8 +162,6 @@ export async function handleInboundMessage(
 
   // They came back — stop any nudges we had queued for them.
   await cancelFollowUps(conversation._id).catch(() => {});
-  // A message soon after a broadcast counts as a reply to that campaign.
-  await recordBroadcastReply(contact._id).catch(() => {});
   conversation.lastMessagePreview = text.slice(0, 120);
   await conversation.save();
 
@@ -607,14 +604,23 @@ export async function handleStatusUpdate(status: any): Promise<void> {
     }
   }
 
-  const { WorkflowEvent, Workflow } = await import("../models");
+  const { BroadcastRecipient, Broadcast, WorkflowEvent, Workflow } =
+    await import("../models");
 
-  // Broadcast receipts: recipient rows are the source of truth, and the
-  // campaign's stats are recounted from them.
-  await applyRecipientStatus(waMessageId, newStatus, {
-    title: errTitle,
-    code: errCode,
-  });
+  const rec = await BroadcastRecipient.findOne({ waMessageId });
+  if (rec && rec.status !== newStatus) {
+    const inc: Record<string, number> = {};
+    if (newStatus === "delivered") inc["stats.delivered"] = 1;
+    if (newStatus === "read") inc["stats.read"] = 1;
+    if (newStatus === "failed") inc["stats.failed"] = 1;
+    if (Object.keys(inc).length) {
+      await Broadcast.updateOne({ _id: rec.broadcast }, { $inc: inc });
+      await BroadcastRecipient.updateOne(
+        { _id: rec._id },
+        { $set: { status: newStatus } },
+      );
+    }
+  }
 
   const evt = await WorkflowEvent.findOne({ waMessageId });
   if (evt && evt.status !== newStatus) {
