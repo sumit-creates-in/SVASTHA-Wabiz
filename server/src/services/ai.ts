@@ -10,7 +10,15 @@ import {
 import { ESCALATE_TOKEN, POLICY_PROMPT, sanitizeReply } from "./compliance";
 import { actionsFor, toToolSchema, toOpenAiTool } from "./actions";
 import { customerContextBlock } from "./customer";
-import { getBrain, renderBrainPrompt } from "./brain";
+import {
+  BrainActionResult,
+  brainCustomer,
+  brainDoesActions,
+  brainSlotsText,
+  callBrainAction,
+  getBrain,
+  renderBrainPrompt,
+} from "./brain";
 import { Types } from "mongoose";
 
 interface ChatTurn {
@@ -24,7 +32,28 @@ export interface AiDecision {
   text?: string;
   actionName?: string;
   args?: Record<string, unknown>;
+  /** Actions the brain already performed during this turn (brain-run actions only). */
+  performed?: Array<{ name: string; args: Record<string, unknown>; result: BrainActionResult }>;
 }
+
+/** Live values the brain's prompt needs filled in for this conversation. */
+interface LiveBrainData {
+  slots: string;
+  customerData: string;
+}
+
+/**
+ * WhatsApp conduct rules, adjusted for the brain-run world: nobody reads this inbox, so
+ * "acknowledge and stop" on a request for a human would leave them with nothing. There, a
+ * request for a human is a request for a CALL.
+ */
+const POLICY_PROMPT_CALL_ONLY = POLICY_PROMPT.replace(
+  /- If the customer sounds annoyed, asks to stop, or asks for a human, acknowledge briefly and stop — do not try to keep the conversation going\./,
+  "- If the customer asks to stop, acknowledge briefly and stop. If they are annoyed, have a problem, or ask for a human, that is a request for a CALL — use book_support_call (book_sales_call for a new lead who wants to join) and tell them the team will call. Nobody reads this chat, so never say someone will reply here.",
+).replace(
+  "If unsure, say the team will confirm.",
+  "If unsure, say the team will confirm it on the call.",
+);
 
 /**
  * If they arrived by tapping a Meta ad, we know what they were looking at.
@@ -87,9 +116,13 @@ ${upcoming.join("\n")}
 async function buildSystemPrompt(
   number?: IWabaNumber | null,
   contact?: IContact | null,
+  live?: LiveBrainData,
 ): Promise<string> {
   const settings = await getSettings();
   const brain = getBrain();
+  // When the brain runs the actions, it also decides member vs lead ({CUSTOMER_DATA}) and
+  // there is no human inbox to escalate to.
+  const viaBrain = Boolean(brain && live);
 
   // The shared brain wins when it is available: identity, voice, guardrails, the
   // programme catalogue, the FAQ and the qualification rules then match BotPlus and the
@@ -101,7 +134,7 @@ async function buildSystemPrompt(
   let docs: Array<{ title: string; content: string }> = [];
 
   if (brain) {
-    prompt = renderBrainPrompt(brain);
+    prompt = renderBrainPrompt(brain, live ? { slots: live.slots, customerData: live.customerData } : {});
     const override = number?.systemPromptOverride?.trim();
     if (override) prompt += `\n\n## This number's own instructions\n${override}`;
   } else {
@@ -123,7 +156,7 @@ async function buildSystemPrompt(
         " This number is a customer support line — be practical and solution-focused.";
   }
 
-  if (contact) prompt += customerContextBlock(contact);
+  if (contact && !viaBrain) prompt += customerContextBlock(contact);
 
   if (docs.length) {
     prompt +=
@@ -131,9 +164,9 @@ async function buildSystemPrompt(
       docs.map((d) => `### ${d.title}\n${d.content}`).join("\n\n");
   }
 
-  prompt += "\n\n" + POLICY_PROMPT;
+  prompt += "\n\n" + (viaBrain ? POLICY_PROMPT_CALL_ONLY : POLICY_PROMPT);
 
-  if (settings.escalateWhenUnsure) {
+  if (settings.escalateWhenUnsure && !viaBrain) {
     prompt += `\n\n## When you are not sure
 If the answer is not in the business knowledge base above, and no action covers the request, do NOT guess and do NOT give a generic non-answer. Reply with exactly this marker and nothing else:
 ${ESCALATE_TOKEN}
@@ -295,6 +328,86 @@ async function callOpenAI(
 }
 
 /**
+ * The brain-run turn: the model may call book_sales_call / book_support_call; each call is
+ * forwarded to the brain, which books it for real, and its answer goes back to the model so
+ * the reply to the customer reflects what actually happened (booked, slot taken, missing
+ * phone…). Up to three rounds.
+ */
+export async function callOpenAIWithBrainActions(
+  system: string,
+  turns: ChatTurn[],
+  model: string,
+  maxTokens: number,
+  tools: unknown[],
+  ctx: { phone: string; name?: string; personType: string },
+): Promise<AiDecision> {
+  const messages: any[] = [{ role: "system", content: system }, ...turns];
+  const performed: NonNullable<AiDecision["performed"]> = [];
+  const summary = turns
+    .slice(-8)
+    .map((t) => `${t.role === "user" ? "customer" : "bot"}: ${t.content}`)
+    .join(" | ")
+    .slice(0, 1500);
+  const lastMessage = [...turns].reverse().find((t) => t.role === "user")?.content || "";
+
+  for (let round = 0; round < 3; round++) {
+    const { data } = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model,
+        max_completion_tokens: maxTokens,
+        messages,
+        tools,
+        tool_choice: "auto",
+        parallel_tool_calls: false,
+      },
+      { headers: { Authorization: `Bearer ${env.ai.openaiKey}` }, timeout: 60000 },
+    );
+    const msg = data?.choices?.[0]?.message;
+    const calls: any[] = msg?.tool_calls || [];
+    if (!calls.length) {
+      const text = (msg?.content || "").trim();
+      return text ? { kind: "text", text, performed } : { kind: "none", performed };
+    }
+
+    messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: calls });
+    for (const call of calls) {
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(call.function?.arguments || "{}");
+      } catch {
+        /* malformed — the brain will answer with what is missing */
+      }
+      const name = String(call.function?.name || "");
+      const result = await callBrainAction(name, {
+        args,
+        contact: { phone: ctx.phone, name: ctx.name },
+        conversation: { summary, lastMessage },
+        personType: ctx.personType,
+      });
+      console.log(
+        `[ai] brain action ${name} → ${result.ok ? result.status : result.error}${result.bookingId ? ` #${result.bookingId}` : ""}`,
+      );
+      performed.push({ name, args, result });
+      messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: JSON.stringify({ ok: result.ok, status: result.status, error: result.error, message: result.messageForModel }),
+      });
+    }
+  }
+  // Still calling tools after three rounds: say something safe rather than nothing.
+  const last = performed[performed.length - 1];
+  return {
+    kind: "text",
+    text: last?.result.ok
+      ? "Done — our team will call you on this number. 🙏"
+      : "Sorry, I couldn't arrange that just now — please send your request again in a few minutes. 🙏",
+    performed,
+  };
+}
+
+/**
  * Which model to run. The brain pins provider, model and max tokens so all three Svastha
  * bots answer with the same one; without it we fall back to the dashboard's AI settings.
  */
@@ -323,9 +436,32 @@ export async function decide(
   conversationId: Types.ObjectId,
   number?: IWabaNumber | null,
   contact?: IContact | null,
+  opts: { systemNote?: string } = {},
 ): Promise<AiDecision> {
   try {
     const settings = await getSettings();
+    const brain = getBrain();
+
+    // ── Brain-run actions: real slots, real bookings ──
+    if (brain && brainDoesActions() && brain.provider === "openai" && contact) {
+      if (!env.ai.openaiKey) throw new Error("OPENAI_API_KEY not set");
+      const [slots, customer] = await Promise.all([brainSlotsText(), brainCustomer(contact.waId)]);
+      const customerData = customer
+        ? JSON.stringify(customer).slice(0, 3000)
+        : "null (not found in our member records — treat them as a NEW LEAD unless they clearly say they are a member)";
+      let system = await buildSystemPrompt(number, contact, { slots, customerData });
+      if (opts.systemNote) system += `\n\n## Already done by the system for this message\n${opts.systemNote}`;
+      const turns = await buildHistory(conversationId);
+      if (!turns.length) return { kind: "none" };
+      const decision = await callOpenAIWithBrainActions(system, turns, brain.model, brain.maxTokens, brain.tools as unknown[], {
+        phone: contact.waId,
+        name: contact.name || undefined,
+        personType: customer ? "customer" : "lead",
+      });
+      if (decision.kind === "text") decision.text = sanitizeReply(decision.text!, settings);
+      return decision;
+    }
+
     const system = await buildSystemPrompt(number, contact);
     const turns = await buildHistory(conversationId);
     if (!turns.length) return { kind: "none" };

@@ -8,6 +8,7 @@ import {
 } from "../models";
 import * as wa from "./whatsapp";
 import { decide } from "./ai";
+import { brainDoesActions, callBrainAction, matchEscalationKeyword } from "./brain";
 import { AiAction } from "../models";
 import { runAction } from "./actions";
 import { syncCustomer } from "./customer";
@@ -343,9 +344,33 @@ export async function handleInboundMessage(
     }
   }
 
+  // ── 6b. Always-urgent words (refund, fraud, legal, chest pain…) ──
+  // Nobody reads this inbox, so these raise an URGENT support call-back straight away,
+  // before the model is even asked — a floor that does not depend on the model. The model
+  // is then told it has been done, so it replies naturally in their language.
+  let systemNote: string | undefined;
+  if (brainDoesActions()) {
+    const keyword = matchEscalationKeyword(text);
+    if (keyword) {
+      const result = await callBrainAction("book_support_call", {
+        args: { issue: text.slice(0, 800), priority: "urgent", full_name: contact.name || undefined },
+        contact: { phone: waId, name: contact.name || undefined },
+        conversation: { summary: `Keyword "${keyword}" in: ${text.slice(0, 600)}`, lastMessage: text },
+      });
+      console.log(`[ai] keyword "${keyword}" → urgent support call: ${result.ok ? result.status : result.error}`);
+      await noteBrainAction(conversation, contact, number, "book_support_call", result);
+      systemNote = result.ok
+        ? `An URGENT support call-back has ALREADY been raised for this person (because they mentioned "${keyword}"). ${result.messageForModel} Do not call book_support_call again for this message.`
+        : undefined;
+    }
+  }
+
   // ── 7. Decide: reply in words, or perform an action ───
   console.log(`[ai-debug] 🤖 calling AI decide() for ${waId}`);
-  const decision = await decide(conversation._id as any, number, contact);
+  const decision = await decide(conversation._id as any, number, contact, { systemNote });
+  for (const p of decision.performed || []) {
+    await noteBrainAction(conversation, contact, number, p.name, p.result);
+  }
   console.log(
     `[ai-debug] 🤖 AI decision for ${waId}: kind=${decision.kind}${decision.text ? ` text="${decision.text?.slice(0, 80)}..."` : ""}${decision.actionName ? ` action=${decision.actionName}` : ""}`,
   );
@@ -638,4 +663,47 @@ export async function resolveNumber(
   phoneNumberId: string,
 ): Promise<IWabaNumber | null> {
   return WabaNumber.findOne({ phoneNumberId });
+}
+
+/**
+ * Leave a visible trace in the Wabiz inbox of what the brain booked, and label the
+ * conversation so follow-up nudges stop once a call is booked.
+ */
+async function noteBrainAction(
+  conversation: any,
+  contact: any,
+  number: any,
+  name: string,
+  result: import("./brain").BrainActionResult,
+): Promise<void> {
+  try {
+    const isSales = /sales/.test(name);
+    let text: string;
+    if (result.ok && (result.status === "booked" || result.status === "raised")) {
+      text = isSales
+        ? `📞 Sales call booked by the brain for ${result.slot?.label ?? "the chosen slot"} IST (booking #${result.bookingId}) — on the sales calendar and in the CRM.`
+        : `🆘 Support call-back raised by the brain (booking #${result.bookingId}) — on the support calendar and in the CRM.`;
+      conversation.labels = Array.from(
+        new Set([...(conversation.labels || []), isSales ? "Call-Booked" : "support-call-raised"]),
+      );
+      await conversation.save();
+    } else if (result.ok) {
+      text = `ℹ️ ${name}: ${result.status} (booking #${result.bookingId}) — nothing new booked.`;
+    } else {
+      text = `⚠️ ${name} not done: ${result.error} — the customer was asked for what was missing.`;
+    }
+    await Message.create({
+      conversation: conversation._id,
+      contact: contact._id,
+      number: number._id,
+      direction: "out",
+      author: "system",
+      type: "text",
+      text,
+      status: "sent",
+    });
+    emit("conversation:update", conversation.toObject());
+  } catch (err) {
+    console.error("[ai] could not note brain action:", (err as Error).message);
+  }
 }
