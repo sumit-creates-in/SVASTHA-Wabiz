@@ -135,8 +135,16 @@ async function buildSystemPrompt(
 
   if (brain) {
     prompt = renderBrainPrompt(brain, live ? { slots: live.slots, customerData: live.customerData } : {});
-    const override = number?.systemPromptOverride?.trim();
-    if (override) prompt += `\n\n## This number's own instructions\n${override}`;
+    // The brain decides who the bot is and what it knows. A per-number prompt override from
+    // the Wabiz dashboard is NOT added on top — that is how an old name ("Priya") and old
+    // programme details kept showing up after the brain was changed.
+    if (number?.systemPromptOverride?.trim()) {
+      console.log(
+        `[brain] ignoring the dashboard prompt override on ${number.displayPhoneNumber} (${number.systemPromptOverride.trim().length} chars) — the brain decides identity and knowledge`,
+      );
+    }
+    prompt +=
+      "\n\nIntroduce yourself only by the name given in your identity at the top of this prompt. If earlier messages in this chat used a different name, that name is out of date — use the one above from now on.";
   } else {
     docs = await KnowledgeDoc.find({ enabled: true }).lean();
     prompt = number?.systemPromptOverride?.trim() || settings.systemPrompt;
