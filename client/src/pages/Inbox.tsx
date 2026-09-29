@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Bot,
   Send,
@@ -131,6 +132,14 @@ export default function Inbox() {
     setNoteDraft(conv?.note || "");
     setConversations((prev) => prev.map((c) => (c._id === id ? { ...c, unreadCount: 0 } : c)));
   }
+
+  // Deep link from the Contacts page: /inbox?conversation=<id>
+  const [searchParams] = useSearchParams();
+  const linkedId = searchParams.get("conversation");
+  useEffect(() => {
+    if (linkedId && linkedId !== activeId) openConversation(linkedId).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedId]);
 
   async function patchConversation(body: Record<string, unknown>) {
     if (!activeId) return;
