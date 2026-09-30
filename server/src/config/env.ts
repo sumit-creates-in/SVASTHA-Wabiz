@@ -23,10 +23,7 @@ export const env = {
     verifyToken: e.WHATSAPP_VERIFY_TOKEN || "svastha-verify",
     appSecret: e.WHATSAPP_APP_SECRET || "",
   },
-  ai: {
-    anthropicKey: e.ANTHROPIC_API_KEY || "",
-    openaiKey: e.OPENAI_API_KEY || "",
-  },
+  // No AI keys here: this app never calls a model. One Mind does (see services/brain.ts).
   /**
    * The shared brain. When url and apiKey are set, identity, voice, guardrails, the
    * programme catalogue, the FAQ and the qualification rules all come from the published

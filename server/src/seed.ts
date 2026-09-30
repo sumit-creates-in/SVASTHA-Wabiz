@@ -307,68 +307,27 @@ const LEAD_FOLLOWUP = {
   timezone: "Asia/Kolkata"
 };
 
-/** Install the recommended setup once. Safe to call on every boot. */
+/**
+ * Install the recommended setup once. Safe to call on every boot.
+ *
+ * It no longer installs a system prompt, a knowledge-base document or AI actions: what the
+ * bot knows, says and does lives in One Mind. Only the operational pieces are seeded — the
+ * reply-length limit and the quiet-lead follow-up sequence (whose nudges One Mind writes).
+ * The old SVASTHA_SYSTEM_PROMPT / U21_KNOWLEDGE / action specs above are kept as history
+ * only and are not used anywhere.
+ */
 export async function seedRecommendedSetup(): Promise<void> {
   const settings = await getSettings();
   if ((settings.seedVersion || 0) >= SEED_VERSION) return;
 
-  // 1. System prompt — only if it's still the stock default or empty.
-  const stillDefault =
-    !settings.systemPrompt?.trim() ||
-    settings.systemPrompt.startsWith("You are a helpful, warm customer support assistant");
-  if (stillDefault) {
-    settings.systemPrompt = SVASTHA_SYSTEM_PROMPT;
-    console.log("[seed] installed the Svastha (Priya) system prompt");
-  } else {
-    console.log("[seed] system prompt has been customised — left it alone");
-  }
-
-  // Short replies suit WhatsApp; the prompt asks for 1-4 sentences.
+  // Short replies suit WhatsApp.
   if (settings.maxReplyChars >= 900) settings.maxReplyChars = 450;
-
   settings.seedVersion = SEED_VERSION;
   await settings.save();
 
-  // 2. Knowledge base
-  const kbTitle = "Ultimate 21 Day Weight Loss Challenge";
-  if (!(await KnowledgeDoc.findOne({ title: kbTitle }))) {
-    await KnowledgeDoc.create({ title: kbTitle, content: U21_KNOWLEDGE, enabled: true });
-    console.log("[seed] added the U21DWLC knowledge base document");
-  }
-
-  // 3. Actions — create if missing, and refresh the wording on ones that
-  //    still point at the placeholder webhook (i.e. never configured).
-  for (const spec of [BOOK_SALES_CALL, RAISE_SUPPORT_TICKET]) {
-    const existing = await AiAction.findOne({ name: spec.name });
-    if (!existing) {
-      await AiAction.create(spec);
-      console.log(`[seed] created action "${spec.displayName}"`);
-      continue;
-    }
-    if (existing.webhookUrl.includes("example.com/replace-me")) {
-      Object.assign(existing, {
-        displayName: spec.displayName,
-        description: spec.description,
-        triggerExamples: spec.triggerExamples,
-        audience: spec.audience,
-        fields: spec.fields,
-        confirmationMessage: spec.confirmationMessage,
-        addTags: spec.addTags,
-        addLabels: spec.addLabels,
-        createsLead: spec.createsLead,
-        createsTicket: spec.createsTicket
-      });
-      await existing.save();
-      console.log(`[seed] refreshed unconfigured action "${spec.displayName}"`);
-    }
-  }
-
-  // 4. Follow-up sequence
   if (!(await FollowUpSequence.findOne({ name: LEAD_FOLLOWUP.name }))) {
     await FollowUpSequence.create(LEAD_FOLLOWUP);
-    console.log(
-      "[seed] created the lead follow-up sequence (2h + 20h nudges live; 26h template step needs a template)"
-    );
+    console.log("[seed] created the lead follow-up sequence (nudges are written by One Mind)");
   }
 }
 

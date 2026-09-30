@@ -80,75 +80,7 @@ export default function SettingsPage() {
                 Enabled globally
               </label>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="label">Provider</label>
-                <select
-                  className="input"
-                  value={s.aiProvider}
-                  onChange={(e) => {
-                    const p = e.target.value as "claude" | "openai";
-                    setS({ ...s, aiProvider: p, aiModel: p === "claude" ? "claude-sonnet-5" : "gpt-4o-mini" });
-                  }}
-                >
-                  <option value="claude">Claude (Anthropic)</option>
-                  <option value="openai">OpenAI</option>
-                </select>
-              </div>
-              <div>
-                <label className="label">Model</label>
-                <input className="input" value={s.aiModel} onChange={(e) => setS({ ...s, aiModel: e.target.value })} />
-              </div>
-              <div>
-                <label className="label">Max reply tokens</label>
-                <input
-                  className="input"
-                  type="number"
-                  value={s.aiMaxTokens}
-                  onChange={(e) => setS({ ...s, aiMaxTokens: parseInt(e.target.value) || 500 })}
-                />
-              </div>
-            </div>
-            <p className="text-xs text-slate-500">
-              Switching provider needs the matching API key set on the server
-              (<code className="bg-slate-100 px-1 rounded">ANTHROPIC_API_KEY</code> or{" "}
-              <code className="bg-slate-100 px-1 rounded">OPENAI_API_KEY</code>).
-            </p>
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="label mb-0">System prompt (the AI's personality &amp; rules)</label>
-                <button
-                  type="button"
-                  className="text-xs text-brand-600 hover:underline"
-                  onClick={async () => {
-                    if (!confirm("Replace the system prompt with the recommended Svastha prompt? Your current wording will be lost.")) return;
-                    const updated = await api<Settings>("/settings/restore-prompt", { method: "POST" });
-                    setS(updated);
-                    original.current = JSON.stringify(updated);
-                  }}
-                >
-                  Restore recommended prompt
-                </button>
-              </div>
-              <textarea
-                className="input font-mono text-xs"
-                rows={14}
-                value={s.systemPrompt}
-                onChange={(e) => setS({ ...s, systemPrompt: e.target.value })}
-              />
-              <p className="text-xs text-slate-400 mt-1">
-                Today's date, the current IST time and any ad the person clicked are added automatically — don't
-                write placeholders for them.
-              </p>
-            </div>
-            <div>
-              <label className="label">Human-handoff keywords (comma-separated)</label>
-              <input
-                className="input"
-                value={s.handoffKeywords.join(", ")}
-                onChange={(e) => setS({ ...s, handoffKeywords: e.target.value.split(",").map((k) => k.trim()).filter(Boolean) })}
-              />
-            </div>
+            <OneMindNote />
           </div>
 
           {/* ── AI safety ── */}
@@ -165,16 +97,10 @@ export default function SettingsPage() {
             </div>
 
             <Toggle
-              checked={s.escalateWhenUnsure}
-              onChange={(v) => setS({ ...s, escalateWhenUnsure: v })}
-              label="Escalate instead of guessing"
-              hint="When the answer isn't in the knowledge base, the AI hands the chat to a human rather than inventing an answer."
-            />
-            <Toggle
               checked={s.frustrationAutoHandoff}
               onChange={(v) => setS({ ...s, frustrationAutoHandoff: v })}
-              label="Detect frustration and hand off automatically"
-              hint="An annoyed customer is one tap from blocking you. The AI stops and flags the chat as at-risk."
+              label="Label frustrated customers as at-risk"
+              hint="Adds an at-risk label in the inbox. Whether a support call is raised is decided by One Mind."
             />
             <Toggle
               checked={s.blockPromoWhenNotAsked}
@@ -206,14 +132,6 @@ export default function SettingsPage() {
                   onChange={(e) => setS({ ...s, maxLinksPerReply: parseInt(e.target.value) || 0 })}
                 />
               </div>
-            </div>
-            <div>
-              <label className="label">Holding message when the AI escalates</label>
-              <input
-                className="input"
-                value={s.escalationMessage}
-                onChange={(e) => setS({ ...s, escalationMessage: e.target.value })}
-              />
             </div>
           </div>
 
@@ -282,146 +200,6 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* ── Svastha app integration ── */}
-          <div className="card p-6 space-y-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="font-semibold">Svastha app — customer lookup</h2>
-                <p className="text-xs text-slate-500 mt-1">
-                  On each inbound message WABIZ asks your API who the sender is. The answer decides whether the AI
-                  treats them as a lead or an existing customer, and their account details are given to the AI so
-                  it can answer accurately instead of guessing.
-                </p>
-              </div>
-              <label className="flex items-center gap-2 text-sm cursor-pointer shrink-0">
-                <input
-                  type="checkbox"
-                  className="w-4 h-4 accent-emerald-600"
-                  checked={s.customerLookupEnabled}
-                  onChange={(e) => setS({ ...s, customerLookupEnabled: e.target.checked })}
-                />
-                Enabled
-              </label>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div className="md:col-span-3">
-                <label className="label">Lookup URL — {"{{phone}}"} is replaced with the number</label>
-                <input
-                  className="input font-mono text-xs"
-                  placeholder="https://api.svastha.app/v1/customers/lookup?phone={{phone}}"
-                  value={s.customerLookupUrl}
-                  onChange={(e) => setS({ ...s, customerLookupUrl: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="label">Method</label>
-                <select
-                  className="input"
-                  value={s.customerLookupMethod}
-                  onChange={(e) => setS({ ...s, customerLookupMethod: e.target.value as any })}
-                >
-                  <option value="GET">GET</option>
-                  <option value="POST">POST</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="label">Headers (one per line, Key: Value — put your API key here)</label>
-              <textarea
-                className="input font-mono text-xs"
-                rows={2}
-                placeholder="Authorization: Bearer YOUR_API_KEY"
-                value={Object.entries(s.customerLookupHeaders || {})
-                  .map(([k, v]) => `${k}: ${v}`)
-                  .join("\n")}
-                onChange={(e) => {
-                  const headers: Record<string, string> = {};
-                  e.target.value.split("\n").forEach((line) => {
-                    const idx = line.indexOf(":");
-                    if (idx > 0) headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-                  });
-                  setS({ ...s, customerLookupHeaders: headers });
-                }}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <label className="label">"Found" field path</label>
-                <input
-                  className="input font-mono text-xs"
-                  placeholder="found"
-                  value={s.customerFoundPath}
-                  onChange={(e) => setS({ ...s, customerFoundPath: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="label">Customer data path</label>
-                <input
-                  className="input font-mono text-xs"
-                  placeholder="customer"
-                  value={s.customerDataPath}
-                  onChange={(e) => setS({ ...s, customerDataPath: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="label">Cache (minutes)</label>
-                <input
-                  className="input"
-                  type="number"
-                  value={s.customerLookupCacheMinutes}
-                  onChange={(e) => setS({ ...s, customerLookupCacheMinutes: parseInt(e.target.value) || 0 })}
-                />
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-500">
-              Expected response shape:{" "}
-              <code className="bg-slate-100 px-1 rounded">
-                {'{ "found": true, "customer": { "name": "...", "plan": "...", "status": "active" } }'}
-              </code>
-              . Everything under the data path is flattened and shown to the AI.
-            </p>
-
-            <LookupTester />
-          </div>
-
-          {/* ── Business hours ── */}
-          <div className="card p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold">Business hours</h2>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={s.businessHours.enabled}
-                  onChange={(e) => setS({ ...s, businessHours: { ...s.businessHours, enabled: e.target.checked } })}
-                  className="w-4 h-4 accent-emerald-600"
-                />
-                Enabled
-              </label>
-            </div>
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <label className="label">Start</label>
-                <input className="input" type="time" value={s.businessHours.start} onChange={(e) => setS({ ...s, businessHours: { ...s.businessHours, start: e.target.value } })} />
-              </div>
-              <div>
-                <label className="label">End</label>
-                <input className="input" type="time" value={s.businessHours.end} onChange={(e) => setS({ ...s, businessHours: { ...s.businessHours, end: e.target.value } })} />
-              </div>
-              <div>
-                <label className="label">Timezone</label>
-                <input className="input" value={s.businessHours.timezone} onChange={(e) => setS({ ...s, businessHours: { ...s.businessHours, timezone: e.target.value } })} />
-              </div>
-            </div>
-            <div>
-              <label className="label">Outside-hours auto message (optional)</label>
-              <input className="input" value={s.outsideHoursMessage} onChange={(e) => setS({ ...s, outsideHoursMessage: e.target.value })} />
-            </div>
-          </div>
-
           {error && <p className="text-sm text-red-600">{error}</p>}
         </form>
       </div>
@@ -452,68 +230,21 @@ export default function SettingsPage() {
   );
 }
 
-/** Fire a real lookup so you can confirm the mapping before going live. */
-function LookupTester() {
-  const [phone, setPhone] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ isCustomer: boolean; error?: string; fields: Record<string, string> } | null>(
-    null
-  );
-
-  async function run() {
-    setBusy(true);
-    setResult(null);
-    try {
-      setResult(
-        await api<{ isCustomer: boolean; error?: string; fields: Record<string, string> }>(
-          "/customer-lookup/test",
-          { method: "POST", body: { phone } }
-        )
-      );
-    } catch (e: any) {
-      setResult({ isCustomer: false, error: e.message, fields: {} });
-    } finally {
-      setBusy(false);
-    }
-  }
-
+/** Where replies come from. Read-only: nothing about the AI is set in this app. */
+function OneMindNote() {
+  const [st, setSt] = useState<{ configured: boolean; version: string | null; lastError: string | null } | null>(null);
+  useEffect(() => {
+    api<{ configured: boolean; version: string | null; lastError: string | null }>("/one-mind").then(setSt).catch(() => {});
+  }, []);
   return (
-    <div className="border-t border-slate-200 pt-4">
-      <label className="label">Test the lookup</label>
-      <div className="flex gap-2">
-        <input
-          className="input"
-          placeholder="919880024120"
-          value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-        />
-        <button type="button" className="btn-secondary shrink-0" onClick={run} disabled={!phone || busy}>
-          {busy ? "Checking…" : "Run lookup"}
-        </button>
-      </div>
-      {result && (
-        <div className="mt-3 text-xs bg-slate-50 rounded-lg p-3">
-          {result.error ? (
-            <p className="text-red-600">{result.error}</p>
-          ) : (
-            <>
-              <p className={result.isCustomer ? "text-emerald-700 font-medium" : "text-amber-700 font-medium"}>
-                {result.isCustomer ? "Matched an existing customer" : "No match — would be treated as a lead"}
-              </p>
-              {Object.keys(result.fields).length > 0 && (
-                <dl className="grid grid-cols-2 gap-1 mt-2">
-                  {Object.entries(result.fields).map(([k, v]) => (
-                    <div key={k}>
-                      <dt className="text-slate-500">{k}</dt>
-                      <dd className="font-medium">{v}</dd>
-                    </div>
-                  ))}
-                </dl>
-              )}
-            </>
-          )}
-        </div>
-      )}
+    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+      <p className="font-medium">Replies come from One Mind{st?.version ? ` — version ${st.version}` : ""}.</p>
+      <p className="text-xs mt-1">
+        What the bot knows, how it speaks, which AI it uses, call bookings and support call-backs are all managed in the
+        CRM → Bots → Brain (super admin only). Nothing about the AI is stored or edited in Wabiz.
+      </p>
+      {st && !st.configured && <p className="text-xs mt-1 text-red-700">One Mind is not connected — the bot cannot reply.</p>}
+      {st?.lastError && <p className="text-xs mt-1 text-amber-700">Last problem reaching One Mind: {st.lastError}</p>}
     </div>
   );
 }

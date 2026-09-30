@@ -1,206 +1,31 @@
-import axios from "axios";
-import { env } from "../config/env";
-import {
-  getSettings,
-  IContact,
-  IWabaNumber,
-  KnowledgeDoc,
-  Message,
-} from "../models";
-import { ESCALATE_TOKEN, POLICY_PROMPT, sanitizeReply } from "./compliance";
-import { actionsFor, toToolSchema, toOpenAiTool } from "./actions";
-import { customerContextBlock } from "./customer";
-import {
-  BrainActionResult,
-  brainCustomer,
-  brainDoesActions,
-  brainSlotsText,
-  callBrainAction,
-  getBrain,
-  renderBrainPrompt,
-} from "./brain";
+/**
+ * Replies come from One Mind.
+ *
+ * This file used to build prompts, pick a model, call OpenAI/Claude and run local "AI
+ * actions". None of that lives here any more. Wabiz collects the recent messages of a
+ * conversation, asks One Mind (services/brain.ts) and returns the answer. There is no model,
+ * no API key and no knowledge base in this app.
+ */
 import { Types } from "mongoose";
+import { getSettings, IContact, IWabaNumber, Message } from "../models";
+import { sanitizeReply } from "./compliance";
+import { askBrain, BrainAction, ChatTurn } from "./brain";
 
-interface ChatTurn {
-  role: "user" | "assistant";
-  content: string;
-}
-
-/** What the model decided to do with this turn. */
+/** What One Mind decided for this turn. */
 export interface AiDecision {
-  kind: "text" | "action" | "none";
+  kind: "text" | "none";
   text?: string;
-  actionName?: string;
-  args?: Record<string, unknown>;
-  /** Actions the brain already performed during this turn (brain-run actions only). */
-  performed?: Array<{ name: string; args: Record<string, unknown>; result: BrainActionResult }>;
+  /** Calls One Mind booked or raised while answering (already done — for notes and labels). */
+  performed?: BrainAction[];
+  /** Member or lead, as One Mind saw them. */
+  personType?: string;
+  /** One Mind could not be reached; `text` is the saved offline line. */
+  offline?: boolean;
+  error?: string;
 }
 
-/** Live values the brain's prompt needs filled in for this conversation. */
-interface LiveBrainData {
-  slots: string;
-  customerData: string;
-}
-
-/**
- * WhatsApp conduct rules, adjusted for the brain-run world: nobody reads this inbox, so
- * "acknowledge and stop" on a request for a human would leave them with nothing. There, a
- * request for a human is a request for a CALL.
- */
-const POLICY_PROMPT_CALL_ONLY = POLICY_PROMPT.replace(
-  /- If the customer sounds annoyed, asks to stop, or asks for a human, acknowledge briefly and stop — do not try to keep the conversation going\./,
-  "- If the customer asks to stop, acknowledge briefly and stop. If they are annoyed, have a problem, or ask for a human, that is a request for a CALL — use book_support_call (book_sales_call for a new lead who wants to join) and tell them the team will call. Nobody reads this chat, so never say someone will reply here.",
-).replace(
-  "If unsure, say the team will confirm.",
-  "If unsure, say the team will confirm it on the call.",
-);
-
-/**
- * If they arrived by tapping a Meta ad, we know what they were looking at.
- * Opening with that beats a cold "how can I help you".
- */
-function referralContextBlock(contact: IContact): string {
-  const r = contact.referral;
-  if (!r || !r.sourceId) return "";
-  const parts = [
-    r.headline ? `Ad headline: "${r.headline}"` : "",
-    r.body ? `Ad text: "${r.body}"` : "",
-    r.sourceType ? `Source: ${r.sourceType}` : ""
-  ].filter(Boolean);
-  if (!parts.length) return "";
-
-  return `\n\n## How this person reached us
-They tapped one of our ads on Facebook or Instagram to start this chat.
-${parts.join("\n")}
-
-Assume they are interested in what that ad offered. Acknowledge it naturally in your first reply instead of asking what they need — for example "Hi! Saw you're interested in the 21 Day Challenge 🙏 What would you like to know?". Do not read the ad text back to them word for word.`;
-}
-
-/**
- * The model has no clock. Without this it cannot turn "tomorrow evening" into a
- * real date, so booked calls land on the wrong day. Everything is IST because
- * that's when the team actually calls people.
- */
-function dateContextBlock(): string {
-  const tz = "Asia/Kolkata";
-  const now = new Date();
-  const fmt = (d: Date) =>
-    d.toLocaleDateString("en-CA", { timeZone: tz }); // YYYY-MM-DD
-  const dayName = (d: Date) =>
-    d.toLocaleDateString("en-GB", { timeZone: tz, weekday: "long" });
-
-  const today = new Date(now);
-  const upcoming: string[] = [];
-  for (let i = 1; i <= 7; i++) {
-    const d = new Date(now.getTime() + i * 86400000);
-    upcoming.push(`- ${dayName(d)} = ${fmt(d)}${i === 1 ? " (this is “tomorrow”)" : ""}`);
-  }
-
-  return `\n\n## Today's date and time
-Today is ${dayName(today)}, ${fmt(today)} (IST). The current time is ${now.toLocaleTimeString(
-    "en-GB",
-    { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false },
-  )} IST.
-
-The next seven days:
-${upcoming.join("\n")}
-
-## Converting what people say into a date and time
-- Work out the exact calendar date from whatever they say. "Tomorrow" is the date listed above. A weekday name means the next such date after today.
-- Convert times to 24-hour format. "Morning" = 11:00, "afternoon" = 15:00, "evening" = 18:00, unless they give a specific time.
-- Our calling hours are 10:00 to 19:00 IST. If they ask for a time outside that, warmly suggest the nearest time inside our hours and use that instead.
-- If they ask for a time that has already passed today, assume they mean tomorrow and confirm it with them.
-- Always repeat the day and time back to them in plain language when you confirm.`;
-}
-
-async function buildSystemPrompt(
-  number?: IWabaNumber | null,
-  contact?: IContact | null,
-  live?: LiveBrainData,
-): Promise<string> {
-  const settings = await getSettings();
-  const brain = getBrain();
-  // When the brain runs the actions, it also decides member vs lead ({CUSTOMER_DATA}) and
-  // there is no human inbox to escalate to.
-  const viaBrain = Boolean(brain && live);
-
-  // The shared brain wins when it is available: identity, voice, guardrails, the
-  // programme catalogue, the FAQ and the qualification rules then match BotPlus and the
-  // Instagram bot exactly, and it already carries today's date and the knowledge base.
-  // A per-number persona override still applies on top. If the brain has never been
-  // reached we fall back to the dashboard's own prompt and Knowledge documents, so
-  // WhatsApp keeps being answered either way.
-  let prompt: string;
-  let docs: Array<{ title: string; content: string }> = [];
-
-  if (brain) {
-    prompt = renderBrainPrompt(brain, live ? { slots: live.slots, customerData: live.customerData } : {});
-    // The brain decides who the bot is and what it knows. A per-number prompt override from
-    // the Wabiz dashboard is NOT added on top — that is how an old name ("Priya") and old
-    // programme details kept showing up after the brain was changed.
-    if (number?.systemPromptOverride?.trim()) {
-      console.log(
-        `[brain] ignoring the dashboard prompt override on ${number.displayPhoneNumber} (${number.systemPromptOverride.trim().length} chars) — the brain decides identity and knowledge`,
-      );
-    }
-    prompt +=
-      "\n\nIntroduce yourself only by the name given in your identity at the top of this prompt. If earlier messages in this chat used a different name, that name is out of date — use the one above from now on.";
-  } else {
-    docs = await KnowledgeDoc.find({ enabled: true }).lean();
-    prompt = number?.systemPromptOverride?.trim() || settings.systemPrompt;
-    prompt += dateContextBlock();
-  }
-
-  // Where they came from — a click-to-WhatsApp ad tells us what they're after.
-  if (contact) prompt += referralContextBlock(contact);
-
-  if (number) {
-    prompt += `\n\nYou are answering on the business WhatsApp number "${number.verifiedName || number.label}" (${number.displayPhoneNumber}).`;
-    if (number.purpose === "otp")
-      prompt +=
-        " This number is used for transactional/OTP messages only — never send marketing content here.";
-    if (number.purpose === "support")
-      prompt +=
-        " This number is a customer support line — be practical and solution-focused.";
-  }
-
-  if (contact && !viaBrain) prompt += customerContextBlock(contact);
-
-  if (docs.length) {
-    prompt +=
-      "\n\n## Business knowledge base\nUse the following verified business information to answer questions. Prefer it over general knowledge. If the answer isn't here, say the team will confirm.\n\n" +
-      docs.map((d) => `### ${d.title}\n${d.content}`).join("\n\n");
-  }
-
-  prompt += "\n\n" + (viaBrain ? POLICY_PROMPT_CALL_ONLY : POLICY_PROMPT);
-
-  if (settings.escalateWhenUnsure && !viaBrain) {
-    prompt += `\n\n## When you are not sure
-If the answer is not in the business knowledge base above, and no action covers the request, do NOT guess and do NOT give a generic non-answer. Reply with exactly this marker and nothing else:
-${ESCALATE_TOKEN}
-A human will take over. Guessing damages trust and gets the number reported — escalating costs nothing.`;
-  }
-
-  if (
-    settings.conservativeOnYellowQuality &&
-    number &&
-    number.qualityRating === "YELLOW"
-  ) {
-    prompt +=
-      "\n\n## Caution mode\nThis number's quality rating has dropped. Keep replies unusually short and strictly factual. Do not mention offers, promotions or prices unless the customer asked directly.";
-  }
-
-  return prompt;
-}
-
-async function buildHistory(
-  conversationId: Types.ObjectId,
-  limit = 20,
-): Promise<ChatTurn[]> {
-  const msgs = await Message.find({
-    conversation: conversationId,
-    author: { $ne: "system" },
-  })
+async function buildHistory(conversationId: Types.ObjectId, limit = 20): Promise<ChatTurn[]> {
+  const msgs = await Message.find({ conversation: conversationId, author: { $ne: "system" } })
     .sort({ createdAt: -1 })
     .limit(limit)
     .lean();
@@ -208,8 +33,7 @@ async function buildHistory(
   const turns: ChatTurn[] = [];
   for (const m of msgs) {
     if (!m.text) continue;
-    const role: "user" | "assistant" =
-      m.direction === "in" ? "user" : "assistant";
+    const role: "user" | "assistant" = m.direction === "in" ? "user" : "assistant";
     const last = turns[turns.length - 1];
     if (last && last.role === role) last.content += "\n" + m.text;
     else turns.push({ role, content: m.text });
@@ -218,415 +42,69 @@ async function buildHistory(
   return turns;
 }
 
-// ── Provider calls ──────────────────────────────────────
-
-async function callClaude(
-  system: string,
-  turns: ChatTurn[],
-  model: string,
-  maxTokens: number,
-  tools?: unknown[],
-): Promise<AiDecision> {
-  const { data } = await axios.post(
-    "https://api.anthropic.com/v1/messages",
-    {
-      model,
-      max_tokens: maxTokens,
-      system,
-      messages: turns,
-      ...(tools && tools.length ? { tools } : {}),
-    },
-    {
-      headers: {
-        "x-api-key": env.ai.anthropicKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      timeout: 60000,
-    },
-  );
-
-  const blocks: any[] = data?.content || [];
-  const toolUse = blocks.find((b) => b.type === "tool_use");
-  if (toolUse) {
-    return {
-      kind: "action",
-      actionName: toolUse.name,
-      args: toolUse.input || {},
-    };
-  }
-  const text = blocks
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n")
-    .trim();
-  return text ? { kind: "text", text } : { kind: "none" };
+/** If they arrived by tapping a Meta ad, One Mind is told what the ad said. */
+function referralOf(contact: IContact) {
+  const r = contact.referral;
+  if (!r || !r.sourceId || (!r.headline && !r.body)) return undefined;
+  return { headline: r.headline || undefined, body: r.body || undefined };
 }
 
-async function callOpenAI(
-  system: string,
-  turns: ChatTurn[],
-  model: string,
-  maxTokens: number,
-  tools?: unknown[],
-): Promise<AiDecision> {
-  // Some newer/custom OpenAI models (e.g. o-series, gpt-5.x-luna) do not
-  // support function tools via /v1/chat/completions. If tools are requested,
-  // try with tools first; on a 400 error mentioning tools/reasoning_effort,
-  // automatically retry without tools so the chat reply still goes through.
-  const buildBody = (withTools: boolean) => ({
-    model,
-    max_completion_tokens: maxTokens,
-    messages: [{ role: "system", content: system }, ...turns],
-    ...(withTools && tools && tools.length
-      ? { tools, tool_choice: "auto" }
-      : {}),
-  });
-
-  let data: any;
-  try {
-    const resp = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      buildBody(true),
-      {
-        headers: { Authorization: `Bearer ${env.ai.openaiKey}` },
-        timeout: 60000,
-      },
-    );
-    data = resp.data;
-  } catch (err: any) {
-    const msg: string = err?.response?.data?.error?.message || "";
-    // Retry without tools when model doesn't support them
-    if (
-      err?.response?.status === 400 &&
-      (msg.includes("tools") ||
-        msg.includes("reasoning_effort") ||
-        msg.includes("function"))
-    ) {
-      console.warn(
-        `[ai] model "${model}" doesn't support tools — retrying without tools`,
-      );
-      const resp = await axios.post(
-        "https://api.openai.com/v1/chat/completions",
-        buildBody(false),
-        {
-          headers: { Authorization: `Bearer ${env.ai.openaiKey}` },
-          timeout: 60000,
-        },
-      );
-      data = resp.data;
-    } else {
-      throw err;
-    }
-  }
-
-  const msg = data?.choices?.[0]?.message;
-  const call = msg?.tool_calls?.[0];
-  if (call?.function?.name) {
-    let args: Record<string, unknown> = {};
-    try {
-      args = JSON.parse(call.function.arguments || "{}");
-    } catch {
-      /* malformed arguments — treated as missing below */
-    }
-    return { kind: "action", actionName: call.function.name, args };
-  }
-  const text = (msg?.content || "").trim();
-  return text ? { kind: "text", text } : { kind: "none" };
-}
-
-/**
- * The brain-run turn: the model may call book_sales_call / book_support_call; each call is
- * forwarded to the brain, which books it for real, and its answer goes back to the model so
- * the reply to the customer reflects what actually happened (booked, slot taken, missing
- * phone…). Up to three rounds.
- */
-export async function callOpenAIWithBrainActions(
-  system: string,
-  turns: ChatTurn[],
-  model: string,
-  maxTokens: number,
-  tools: unknown[],
-  ctx: { phone: string; name?: string; personType: string },
-): Promise<AiDecision> {
-  const messages: any[] = [{ role: "system", content: system }, ...turns];
-  const performed: NonNullable<AiDecision["performed"]> = [];
-  const summary = turns
-    .slice(-8)
-    .map((t) => `${t.role === "user" ? "customer" : "bot"}: ${t.content}`)
-    .join(" | ")
-    .slice(0, 1500);
-  const lastMessage = [...turns].reverse().find((t) => t.role === "user")?.content || "";
-
-  for (let round = 0; round < 3; round++) {
-    const { data } = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model,
-        max_completion_tokens: maxTokens,
-        messages,
-        tools,
-        tool_choice: "auto",
-        parallel_tool_calls: false,
-      },
-      { headers: { Authorization: `Bearer ${env.ai.openaiKey}` }, timeout: 60000 },
-    );
-    const msg = data?.choices?.[0]?.message;
-    const calls: any[] = msg?.tool_calls || [];
-    if (!calls.length) {
-      const text = (msg?.content || "").trim();
-      return text ? { kind: "text", text, performed } : { kind: "none", performed };
-    }
-
-    messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: calls });
-    for (const call of calls) {
-      let args: Record<string, unknown> = {};
-      try {
-        args = JSON.parse(call.function?.arguments || "{}");
-      } catch {
-        /* malformed — the brain will answer with what is missing */
-      }
-      const name = String(call.function?.name || "");
-      const result = await callBrainAction(name, {
-        args,
-        contact: { phone: ctx.phone, name: ctx.name },
-        conversation: { summary, lastMessage },
-        personType: ctx.personType,
-      });
-      console.log(
-        `[ai] brain action ${name} → ${result.ok ? result.status : result.error}${result.bookingId ? ` #${result.bookingId}` : ""}`,
-      );
-      performed.push({ name, args, result });
-      messages.push({
-        role: "tool",
-        tool_call_id: call.id,
-        content: JSON.stringify({ ok: result.ok, status: result.status, error: result.error, message: result.messageForModel }),
-      });
-    }
-  }
-  // Still calling tools after three rounds: say something safe rather than nothing.
-  const last = performed[performed.length - 1];
-  return {
-    kind: "text",
-    text: last?.result.ok
-      ? "Done — our team will call you on this number. 🙏"
-      : "Sorry, I couldn't arrange that just now — please send your request again in a few minutes. 🙏",
-    performed,
-  };
-}
-
-/**
- * Which model to run. The brain pins provider, model and max tokens so all three Svastha
- * bots answer with the same one; without it we fall back to the dashboard's AI settings.
- */
-function resolveModel(settings: {
-  aiProvider: string;
-  aiModel: string;
-  aiMaxTokens: number;
-}): { provider: "openai" | "claude"; model: string; maxTokens: number } {
-  const brain = getBrain();
-  if (brain) {
-    const provider = brain.provider === "openai" ? "openai" : "claude";
-    return { provider, model: brain.model, maxTokens: brain.maxTokens };
-  }
-  return {
-    provider: settings.aiProvider === "openai" ? "openai" : "claude",
-    model: settings.aiModel,
-    maxTokens: settings.aiMaxTokens,
-  };
-}
-
-/**
- * Decide what to do with this turn: reply in text, or call one of the
- * configured actions (book a call, raise a ticket, etc.).
- */
+/** Ask One Mind what to reply to the latest message in this conversation. */
 export async function decide(
   conversationId: Types.ObjectId,
-  number?: IWabaNumber | null,
-  contact?: IContact | null,
-  opts: { systemNote?: string } = {},
+  _number: IWabaNumber | null | undefined,
+  contact: IContact,
 ): Promise<AiDecision> {
   try {
+    const messages = await buildHistory(conversationId);
+    if (!messages.length) return { kind: "none" };
+    const out = await askBrain({
+      contact: { phone: contact.waId, name: contact.name || undefined, platform: "WhatsApp" },
+      messages,
+      context: { referral: referralOf(contact) },
+    });
     const settings = await getSettings();
-    const brain = getBrain();
-
-    // ── Brain-run actions: real slots, real bookings ──
-    if (brain && brainDoesActions() && brain.provider === "openai" && contact) {
-      if (!env.ai.openaiKey) throw new Error("OPENAI_API_KEY not set");
-      const [slots, customer] = await Promise.all([brainSlotsText(), brainCustomer(contact.waId)]);
-      const customerData = customer
-        ? JSON.stringify(customer).slice(0, 3000)
-        : "null (not found in our member records — treat them as a NEW LEAD unless they clearly say they are a member)";
-      let system = await buildSystemPrompt(number, contact, { slots, customerData });
-      if (opts.systemNote) system += `\n\n## Already done by the system for this message\n${opts.systemNote}`;
-      const turns = await buildHistory(conversationId);
-      if (!turns.length) return { kind: "none" };
-      const decision = await callOpenAIWithBrainActions(system, turns, brain.model, brain.maxTokens, brain.tools as unknown[], {
-        phone: contact.waId,
-        name: contact.name || undefined,
-        personType: customer ? "customer" : "lead",
-      });
-      if (decision.kind === "text") decision.text = sanitizeReply(decision.text!, settings);
-      return decision;
-    }
-
-    const system = await buildSystemPrompt(number, contact);
-    const turns = await buildHistory(conversationId);
-    if (!turns.length) return { kind: "none" };
-
-    const actions = number && contact ? await actionsFor(number, contact) : [];
-
-    const chosen = resolveModel(settings);
-
-    if (chosen.provider === "openai") {
-      if (!env.ai.openaiKey) throw new Error("OPENAI_API_KEY not set");
-      const decision = await callOpenAI(
-        system,
-        turns,
-        chosen.model,
-        chosen.maxTokens,
-        actions.map(toOpenAiTool),
-      );
-      if (decision.kind === "text")
-        decision.text = sanitizeReply(decision.text!, settings);
-      return decision;
-    }
-
-    if (!env.ai.anthropicKey) throw new Error("ANTHROPIC_API_KEY not set");
-    const decision = await callClaude(
-      system,
-      turns,
-      chosen.model,
-      chosen.maxTokens,
-      actions.map(toToolSchema),
-    );
-    if (decision.kind === "text")
-      decision.text = sanitizeReply(decision.text!, settings);
-    return decision;
+    const text = out.reply ? sanitizeReply(out.reply, settings) : "";
+    return {
+      kind: text ? "text" : "none",
+      text,
+      performed: out.actions,
+      personType: out.personType,
+      offline: out.offline,
+      error: out.ok ? undefined : out.error,
+    };
   } catch (err: any) {
-    console.error(
-      "[ai] decide failed:",
-      err?.response?.data?.error?.message || err.message,
-    );
-    return { kind: "none" };
+    console.error("[ai] decide failed:", err?.message);
+    return { kind: "none", error: err?.message };
   }
 }
 
-/** Text-only reply, used by the "AI draft" button in the inbox. */
-export async function generateReply(
-  conversationId: Types.ObjectId,
-  number?: IWabaNumber | null,
-  contact?: IContact | null,
-): Promise<string> {
-  const decision = await decide(conversationId, number, contact);
-  if (decision.kind === "text") return decision.text || "";
-  if (decision.kind === "action")
-    return `[The AI would run the "${decision.actionName}" action here with: ${JSON.stringify(decision.args)}]`;
-  return "";
-}
-
-/** Returned when following up would be a bad idea. */
 export const FOLLOWUP_SKIP = "[[SKIP]]";
 
 /**
- * Write a single nudge for someone who went quiet.
- *
- * The hard part isn't writing the nudge — it's knowing when NOT to. Chasing
- * someone who already said no is how a number gets blocked and reported, so
- * the model is told to return a skip marker instead.
+ * A nudge for someone who went quiet — written by One Mind from the same knowledge and
+ * rules as every other reply. Returns FOLLOWUP_SKIP when One Mind judges a nudge would be
+ * unwelcome, or when it cannot be reached (a follow-up is never worth a canned line).
  */
 export async function generateFollowUp(
   conversationId: Types.ObjectId,
-  number: IWabaNumber | null,
+  _number: IWabaNumber | null,
   contact: IContact | null,
-  opts: { attempt: number; hoursQuiet: number; lastNudges: string[] },
+  _ctx?: unknown,
 ): Promise<string> {
   try {
-    const settings = await getSettings();
-    const turns = await buildHistory(conversationId, 16);
-    if (!turns.length) return FOLLOWUP_SKIP;
-
-    const base = await buildSystemPrompt(number, contact);
-
-    const system = `${base}
-
-## YOUR TASK RIGHT NOW — write one follow-up message
-This person stopped replying about ${Math.round(opts.hoursQuiet)} hour(s) ago. This is follow-up attempt ${opts.attempt}.
-${opts.lastNudges.length ? `You have already sent these nudges — do NOT repeat them or say the same thing differently:\n${opts.lastNudges.map((n) => `- "${n}"`).join("\n")}` : ""}
-
-Write ONE short message (maximum 2 sentences) that picks up naturally from where the conversation stopped. Reference the specific thing that was being discussed — their goal, the question you asked, whatever they were deciding. Make it easy to reply to.
-
-RETURN THE MARKER ${FOLLOWUP_SKIP} AND NOTHING ELSE IF:
-- They said no, not interested, not now, "cannot afford", "will think about it and let you know", or asked you to stop.
-- They already booked a call, or their question was fully answered and needed no reply.
-- They sound irritated, or the last exchange ended badly.
-- This would be the third or later nudge and they have never once replied.
-- Anything about the conversation makes chasing them feel pushy.
-
-Chasing someone who has already declined gets our number blocked and reported. When in doubt, skip.
-Never mention that this is an automated follow-up. Never apologise for messaging again. Do not open with "Just following up".`;
-
-    const chosen = resolveModel(settings);
-    let raw: string;
-    if (chosen.provider === "openai" && env.ai.openaiKey) {
-      const d = await callOpenAI(system, turns, chosen.model, 300);
-      raw = d.text || "";
-    } else {
-      if (!env.ai.anthropicKey) return FOLLOWUP_SKIP;
-      const d = await callClaude(system, turns, chosen.model, 300);
-      raw = d.text || "";
-    }
-
-    if (!raw.trim() || raw.includes(FOLLOWUP_SKIP)) return FOLLOWUP_SKIP;
-    return sanitizeReply(raw, settings);
+    if (!contact) return FOLLOWUP_SKIP;
+    const messages = await buildHistory(conversationId);
+    if (!messages.length) return FOLLOWUP_SKIP;
+    const out = await askBrain({
+      contact: { phone: contact.waId, name: contact.name || undefined, platform: "WhatsApp" },
+      messages,
+      task: "followup",
+    });
+    if (!out.ok || out.skip || !out.reply.trim()) return FOLLOWUP_SKIP;
+    return sanitizeReply(out.reply, await getSettings());
   } catch (err: any) {
-    console.error("[followup] generation failed:", err.message);
+    console.error("[ai] follow-up failed:", err?.message);
     return FOLLOWUP_SKIP;
-  }
-}
-
-/** Classify a conversation for lead management. */
-export async function classifyConversation(
-  conversationId: Types.ObjectId,
-): Promise<{
-  intent: string;
-  urgency: "low" | "medium" | "high";
-  labels: string[];
-  summary: string;
-} | null> {
-  try {
-    const settings = await getSettings();
-    const turns = await buildHistory(conversationId, 12);
-    if (!turns.length) return null;
-    const transcript = turns
-      .map((t) => `${t.role === "user" ? "Customer" : "Us"}: ${t.content}`)
-      .join("\n");
-    const system =
-      'You classify WhatsApp customer conversations. Reply with ONLY compact JSON: {"intent":"new_lead|question|complaint|booking|payment|support|spam|other","urgency":"low|medium|high","labels":["short-tag"],"summary":"one sentence"}. No prose, no code fences.';
-    const turnsForModel: ChatTurn[] = [{ role: "user", content: transcript }];
-    const decision =
-      settings.aiProvider === "openai" && env.ai.openaiKey
-        ? await callOpenAI(system, turnsForModel, "gpt-4o-mini", 300)
-        : await callClaude(
-            system,
-            turnsForModel,
-            "claude-haiku-4-5-20251001",
-            300,
-          );
-    const raw = decision.text || "";
-    const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
-    return {
-      intent: String(parsed.intent || "other"),
-      urgency: ["low", "medium", "high"].includes(parsed.urgency)
-        ? parsed.urgency
-        : "low",
-      labels: Array.isArray(parsed.labels)
-        ? parsed.labels.slice(0, 4).map(String)
-        : [],
-      summary: String(parsed.summary || ""),
-    };
-  } catch (err: any) {
-    console.error("[ai] classify failed:", err.message);
-    return null;
   }
 }

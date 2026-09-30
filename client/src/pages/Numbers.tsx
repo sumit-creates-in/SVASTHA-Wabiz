@@ -497,8 +497,7 @@ function ManageNumberModal({
   const [form, setForm] = useState({
     label: number.label,
     purpose: number.purpose,
-    aiEnabled: number.aiEnabled,
-    systemPromptOverride: number.systemPromptOverride || ""
+    aiEnabled: number.aiEnabled
   });
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<QualitySnapshot[]>([]);
@@ -635,15 +634,6 @@ function ManageNumberModal({
           />
           AI auto-reply enabled on this number
         </label>
-        <div>
-          <label className="label">System prompt override (optional — blank uses the global prompt)</label>
-          <textarea
-            className="input font-mono text-xs"
-            rows={5}
-            value={form.systemPromptOverride}
-            onChange={(e) => setForm({ ...form, systemPromptOverride: e.target.value })}
-          />
-        </div>
         <div className="flex gap-2">
           <button className="btn-primary" onClick={save} disabled={busy}>
             {busy ? "Saving…" : "Save"}

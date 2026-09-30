@@ -29,11 +29,9 @@ import Broadcasts from "./pages/Broadcasts";
 const BroadcastBuilder = lazy(() => import("./pages/BroadcastBuilder"));
 const BroadcastReport = lazy(() => import("./pages/BroadcastReport"));
 import Templates from "./pages/Templates";
-import Knowledge from "./pages/Knowledge";
 import SettingsPage from "./pages/Settings";
 import Numbers from "./pages/Numbers";
 import WorkflowsPage from "./pages/Workflows";
-import Actions from "./pages/Actions";
 import FollowUps from "./pages/FollowUps";
 import Leads from "./pages/Leads";
 import Team from "./pages/Team";
@@ -43,13 +41,11 @@ const nav = [
   { to: "/inbox", label: "Inbox", icon: MessageSquare, perm: "inbox.view" },
   { to: "/leads", label: "Leads & Tickets", icon: Target, perm: "leads.view" },
   { to: "/contacts", label: "Contacts", icon: Users, perm: "contacts.view" },
-  { to: "/actions", label: "AI Actions", icon: Zap, perm: "actions.view" },
   { to: "/followups", label: "Follow-ups", icon: Clock, perm: "actions.view" },
   { to: "/numbers", label: "Numbers", icon: Phone, perm: "numbers.view" },
   { to: "/workflows", label: "Workflows", icon: Webhook, perm: "workflows.view" },
   { to: "/broadcasts", label: "Broadcasts", icon: Megaphone, perm: "broadcasts.view" },
   { to: "/templates", label: "Templates", icon: FileText, perm: "templates.view" },
-  { to: "/knowledge", label: "AI Knowledge", icon: BookOpen, perm: "knowledge.view" },
   { to: "/team", label: "Team", icon: UsersRound, perm: "team.manage" },
   { to: "/settings", label: "Settings", icon: SettingsIcon, perm: "settings.manage" }
 ];
@@ -153,7 +149,6 @@ function AppRoutes() {
       <Route path="/inbox" element={<Protected perm="inbox.view"><Inbox /></Protected>} />
       <Route path="/leads" element={<Protected perm="leads.view"><Leads /></Protected>} />
       <Route path="/contacts" element={<Protected perm="contacts.view"><Contacts /></Protected>} />
-      <Route path="/actions" element={<Protected perm="actions.view"><Actions /></Protected>} />
       <Route path="/followups" element={<Protected perm="actions.view"><FollowUps /></Protected>} />
       <Route path="/numbers" element={<Protected perm="numbers.view"><Numbers /></Protected>} />
       <Route path="/workflows" element={<Protected perm="workflows.view"><WorkflowsPage /></Protected>} />
@@ -162,7 +157,6 @@ function AppRoutes() {
       <Route path="/broadcasts/:id/edit" element={<Protected perm="broadcasts.send"><Suspense fallback={null}><BroadcastBuilder /></Suspense></Protected>} />
       <Route path="/broadcasts/:id" element={<Protected perm="broadcasts.view"><Suspense fallback={null}><BroadcastReport /></Suspense></Protected>} />
       <Route path="/templates" element={<Protected perm="templates.view"><Templates /></Protected>} />
-      <Route path="/knowledge" element={<Protected perm="knowledge.view"><Knowledge /></Protected>} />
       <Route path="/team" element={<Protected perm="team.manage"><Team /></Protected>} />
       <Route path="/settings" element={<Protected perm="settings.manage"><SettingsPage /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />

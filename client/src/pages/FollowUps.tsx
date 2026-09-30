@@ -151,7 +151,7 @@ export default function FollowUps() {
                       </div>
                       <div className="text-slate-400">
                         {st.mode === "ai"
-                          ? "AI writes it"
+                          ? "One Mind writes it"
                           : st.mode === "template"
                             ? st.templateName || "no template set"
                             : "fixed text"}
@@ -381,7 +381,7 @@ function StepEditor({
                         onChange={(e) => updateStep(i, { mode: e.target.value as any })}
                         disabled={outsideWindow}
                       >
-                        <option value="ai">AI writes it</option>
+                        <option value="ai">One Mind writes it</option>
                         <option value="text">Fixed text</option>
                         <option value="template">Approved template</option>
                       </select>

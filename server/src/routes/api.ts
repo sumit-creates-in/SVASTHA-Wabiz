@@ -36,7 +36,7 @@ import { broadcastsRouter } from "./broadcasts";
 import { runAction, retryRun } from "../services/actions";
 import { syncCustomer } from "../services/customer";
 import * as wa from "../services/whatsapp";
-import { generateReply, classifyConversation } from "../services/ai";
+import { brainStatus } from "../services/brain";
 import { fireWorkflow, newKey } from "../services/workflows";
 import {
   canSendFreeform,
@@ -49,6 +49,72 @@ import { env } from "../config/env";
 import { AuthedRequest } from "../middleware/auth";
 
 export const apiRouter = Router();
+
+// ════════════════════════════════════════════════════════
+// MANAGED IN ONE MIND
+// What the bot knows and says, which AI it runs, its actions and the member lookup all live
+// in One Mind (CRM → Bots → Brain, super admin only). The old endpoints answer 410 so that
+// nothing — not an old browser tab, not a script — can bring a second brain back.
+// ════════════════════════════════════════════════════════
+const ONE_MIND = "This is managed in One Mind now (CRM → Bots → Brain, super admin only). Wabiz no longer stores or edits it.";
+const GONE: RegExp[] = [
+  /^\/knowledge(\/|$)/,
+  /^\/actions(\/|$)/,
+  /^\/action-runs(\/|$)/,
+  /^\/settings\/restore-prompt$/,
+  /^\/customer-lookup\/test$/,
+  /^\/contacts\/[^/]+\/refresh-customer$/,
+  /^\/conversations\/[^/]+\/(suggest|classify)$/,
+];
+/** Settings / number fields that used to shape the AI. Silently dropped from any update. */
+const AI_FIELDS = [
+  "aiProvider", "aiModel", "aiMaxTokens", "systemPrompt", "handoffKeywords", "escalateWhenUnsure",
+  "escalationMessage", "outsideHoursMessage", "customerLookupEnabled", "customerLookupUrl",
+  "customerLookupMethod", "customerLookupHeaders", "customerLookupCacheMinutes", "customerFoundPath",
+  "customerDataPath", "systemPromptOverride",
+];
+apiRouter.use((req, res, next) => {
+  if (GONE.some((re) => re.test(req.path))) {
+    res.status(410).json({ error: ONE_MIND });
+    return;
+  }
+  if ((req.method === "PATCH" || req.method === "POST") && (req.path === "/settings" || /^\/numbers(\/|$)/.test(req.path)) && req.body && typeof req.body === "object") {
+    for (const k of AI_FIELDS) delete (req.body as Record<string, unknown>)[k];
+  }
+  next();
+});
+
+/**
+ * Read-only export of the AI content this app used to hold (prompt, knowledge documents,
+ * per-number instructions, AI actions). Nothing here is used any more; it exists so the old
+ * text can be reviewed and, where worth keeping, moved into One Mind. Admins only.
+ */
+apiRouter.get("/one-mind/legacy-export", requirePermission("settings.manage"), async (_req, res) => {
+  const [settings, docs, numbers, actions] = await Promise.all([
+    getSettings(),
+    KnowledgeDoc.find().lean(),
+    WabaNumber.find().select("label displayPhoneNumber purpose systemPromptOverride").lean(),
+    AiAction.find().select("name displayName description enabled audience fields confirmationMessage").lean(),
+  ]);
+  const s: any = settings.toObject();
+  res.json({
+    note: "Legacy content — not used. Replies come from One Mind.",
+    systemPrompt: s.systemPrompt || "",
+    handoffKeywords: s.handoffKeywords || [],
+    escalationMessage: s.escalationMessage || "",
+    outsideHoursMessage: s.outsideHoursMessage || "",
+    knowledgeDocs: docs.map((d: any) => ({ title: d.title, enabled: d.enabled, content: d.content })),
+    numberInstructions: numbers
+      .filter((n: any) => (n.systemPromptOverride || "").trim())
+      .map((n: any) => ({ number: n.displayPhoneNumber, label: n.label, instructions: n.systemPromptOverride })),
+    actions,
+  });
+});
+
+/** Read-only: where replies come from, for the Settings screen. */
+apiRouter.get("/one-mind", (_req, res) => {
+  res.json(brainStatus());
+});
 
 // ════════════════════════════════════════════════════════
 // NUMBERS (multi-number health & management)
@@ -540,31 +606,6 @@ apiRouter.post("/conversations/:id/template", async (req, res) => {
   res.json(msg);
 });
 
-apiRouter.post("/conversations/:id/suggest", async (req, res) => {
-  const conv = await Conversation.findById(req.params.id);
-  if (!conv) {
-    res.status(404).json({ error: "Conversation not found" });
-    return;
-  }
-  const number = await WabaNumber.findById(conv.number);
-  const text = await generateReply(conv._id as any, number);
-  res.json({ text });
-});
-
-apiRouter.post("/conversations/:id/classify", async (req, res) => {
-  const conv = await Conversation.findById(req.params.id);
-  if (!conv) {
-    res.status(404).json({ error: "Conversation not found" });
-    return;
-  }
-  const result = await classifyConversation(conv._id as any);
-  if (result) {
-    conv.labels = Array.from(new Set([...conv.labels, ...result.labels]));
-    await conv.save();
-    emit("conversation:update", conv.toObject());
-  }
-  res.json(result || { error: "Classification unavailable" });
-});
 
 /** All labels in use, for filters. */
 apiRouter.get("/labels", async (_req, res) => {
@@ -1385,7 +1426,9 @@ apiRouter.delete("/knowledge/:id", async (req, res) => {
 });
 
 apiRouter.get("/settings", async (_req, res) => {
-  res.json(await getSettings());
+  const doc: any = (await getSettings()).toObject();
+  for (const k of AI_FIELDS) delete doc[k];
+  res.json(doc);
 });
 apiRouter.patch("/settings", async (req, res) => {
   const s = await getSettings();

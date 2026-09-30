@@ -65,7 +65,6 @@ export default function Inbox() {
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState({ number: "", status: "", label: "", assigned: "", unread: "" });
   const [showFilters, setShowFilters] = useState(false);
-  const [suggesting, setSuggesting] = useState(false);
   const [sendError, setSendError] = useState("");
   const [showTemplate, setShowTemplate] = useState(false);
   const [newLabel, setNewLabel] = useState("");
@@ -161,24 +160,6 @@ export default function Inbox() {
     } catch (e: any) {
       setSendError(e.message);
     }
-  }
-
-  async function suggest() {
-    if (!activeId) return;
-    setSuggesting(true);
-    try {
-      const { text } = await api<{ text: string }>(`/conversations/${activeId}/suggest`, { method: "POST" });
-      if (text) setDraft(text);
-    } finally {
-      setSuggesting(false);
-    }
-  }
-
-  async function classify() {
-    if (!activeId) return;
-    const r = await api<any>(`/conversations/${activeId}/classify`, { method: "POST" });
-    if (r && r.intent) setInsight(r);
-    loadConversations();
   }
 
   async function addLabel() {
@@ -407,10 +388,6 @@ export default function Inbox() {
             )}
 
             <div className="bg-white border-t border-slate-200 p-3 flex items-end gap-2">
-              <button onClick={suggest} disabled={suggesting} className="btn-secondary shrink-0" title="Ask AI to draft a reply">
-                <Sparkles size={16} className={suggesting ? "animate-pulse" : ""} />
-                {suggesting ? "Thinking…" : "AI draft"}
-              </button>
               <button className="btn-secondary shrink-0" onClick={() => setShowTemplate(true)} title="Send an approved template">
                 <FileText size={16} />
               </button>
@@ -453,7 +430,6 @@ export default function Inbox() {
                   label={active.aiEnabled ? "Pause AI" : "Enable AI"}
                   onClick={() => patchConversation({ aiEnabled: !active.aiEnabled })}
                 />
-                <QuickAction active={false} icon={<Wand2 size={17} />} label="Analyse" onClick={classify} />
               </div>
 
               {insight && (

@@ -8,10 +8,7 @@ import {
 } from "../models";
 import * as wa from "./whatsapp";
 import { decide } from "./ai";
-import { brainDoesActions, callBrainAction, matchEscalationKeyword } from "./brain";
-import { AiAction } from "../models";
-import { runAction } from "./actions";
-import { syncCustomer } from "./customer";
+import type { BrainAction } from "./brain";
 import { scheduleFollowUps, cancelFollowUps } from "./followups";
 import { applyRecipientStatus, recordBroadcastReply } from "./broadcast";
 import { emit } from "../realtime";
@@ -253,41 +250,13 @@ export async function handleInboundMessage(
     `[ai-debug] ✅ AI eligible for ${waId} on ${number.displayPhoneNumber}`,
   );
 
-  // ── 3. Human handoff: explicit request, or a frustrated customer ──
-  // Frustration is the leading indicator of a block or report, which is what
-  // actually drives the number's quality rating down. Stop the bot immediately.
-  const lower = text.toLowerCase();
-  const askedForHuman = settings.handoffKeywords.some(
-    (k) => k && lower.includes(k.toLowerCase()),
-  );
-  const frustrated = settings.frustrationAutoHandoff && detectFrustration(text);
-
-  if (askedForHuman || frustrated) {
-    // Label the conversation for the human team but do NOT disable AI.
-    // AI always keeps replying — the human can step in from Inbox anytime.
-    conversation.status = "pending";
-    conversation.labels = Array.from(
-      new Set([
-        ...conversation.labels,
-        "needs-human",
-        ...(frustrated ? ["at-risk"] : []),
-      ]),
-    );
+  // ── 3. A frustrated customer gets an "at-risk" label ───
+  // Only a label for whoever looks at the inbox. Whether a support call is raised is decided
+  // by One Mind (it has its own always-urgent words), never by this app.
+  if (settings.frustrationAutoHandoff && detectFrustration(text)) {
+    conversation.labels = Array.from(new Set([...conversation.labels, "at-risk"]));
     await conversation.save();
-    if (frustrated && !askedForHuman) {
-      await Message.create({
-        conversation: conversation._id,
-        contact: contact._id,
-        number: number._id,
-        direction: "out",
-        author: "system",
-        type: "text",
-        text: "AI flagged — customer sounds unhappy. Consider replying personally.",
-        status: "sent",
-      });
-    }
     emit("conversation:update", conversation.toObject());
-    // Do NOT return — let AI reply below.
   }
 
   // ── 4. Policy gate: 24h window, opt-out, quality ──────
@@ -311,157 +280,22 @@ export async function handleInboundMessage(
   }
   console.log(`[ai-debug] ✅ quota OK for ${waId}`);
 
-  // ── 5b. Who is this? Lead or existing customer ────────
-  // The answer changes how the AI behaves and which actions it can use.
-  try {
-    await syncCustomer(contact);
-  } catch {
-    /* never block a reply on the lookup */
-  }
-
-  // ── 6. Off-hours notice (once, alongside the AI reply) ─
-  if (
-    !withinBusinessHours(settings.businessHours) &&
-    settings.outsideHoursMessage
-  ) {
-    const dup = await isDuplicateOfLast(
-      conversation._id,
-      settings.outsideHoursMessage,
-    );
-    if (!dup) {
-      const r = await wa.sendText(number, waId, settings.outsideHoursMessage);
-      await Message.create({
-        conversation: conversation._id,
-        contact: contact._id,
-        number: number._id,
-        direction: "out",
-        author: "system",
-        type: "text",
-        text: settings.outsideHoursMessage,
-        waMessageId: r.waMessageId,
-        status: r.error ? "failed" : "sent",
-      });
-    }
-  }
-
-  // ── 6b. Always-urgent words (refund, fraud, legal, chest pain…) ──
-  // Nobody reads this inbox, so these raise an URGENT support call-back straight away,
-  // before the model is even asked — a floor that does not depend on the model. The model
-  // is then told it has been done, so it replies naturally in their language.
-  let systemNote: string | undefined;
-  if (brainDoesActions()) {
-    const keyword = matchEscalationKeyword(text);
-    if (keyword) {
-      const result = await callBrainAction("book_support_call", {
-        args: { issue: text.slice(0, 800), priority: "urgent", full_name: contact.name || undefined },
-        contact: { phone: waId, name: contact.name || undefined },
-        conversation: { summary: `Keyword "${keyword}" in: ${text.slice(0, 600)}`, lastMessage: text },
-      });
-      console.log(`[ai] keyword "${keyword}" → urgent support call: ${result.ok ? result.status : result.error}`);
-      await noteBrainAction(conversation, contact, number, "book_support_call", result);
-      systemNote = result.ok
-        ? `An URGENT support call-back has ALREADY been raised for this person (because they mentioned "${keyword}"). ${result.messageForModel} Do not call book_support_call again for this message.`
-        : undefined;
-    }
-  }
-
-  // ── 7. Decide: reply in words, or perform an action ───
-  console.log(`[ai-debug] 🤖 calling AI decide() for ${waId}`);
-  const decision = await decide(conversation._id as any, number, contact, { systemNote });
+  // ── 6. Ask One Mind ───────────────────────────────────
+  // Member or lead, what to say, whether to book a call or raise a support call-back, and
+  // the always-urgent words — all decided by One Mind. This app only passes the chat on.
+  console.log(`[ai-debug] 🤖 asking One Mind for ${waId}`);
+  const decision = await decide(conversation._id as any, number, contact);
   for (const p of decision.performed || []) {
-    await noteBrainAction(conversation, contact, number, p.name, p.result);
+    await noteBrainAction(conversation, contact, number, p);
+  }
+  if (decision.personType && (decision.personType === "customer") !== Boolean(contact.isCustomer)) {
+    contact.isCustomer = decision.personType === "customer";
+    await contact.save().catch(() => {});
   }
   console.log(
-    `[ai-debug] 🤖 AI decision for ${waId}: kind=${decision.kind}${decision.text ? ` text="${decision.text?.slice(0, 80)}..."` : ""}${decision.actionName ? ` action=${decision.actionName}` : ""}`,
+    `[ai-debug] 🤖 One Mind for ${waId}: ${decision.offline ? "UNREACHABLE — offline line sent" : decision.kind}${decision.text ? ` text="${decision.text.slice(0, 80)}..."` : ""}${(decision.performed || []).map((p) => ` action=${p.name}:${p.ok ? p.status : p.error}`).join("")}`,
   );
-  if (decision.kind === "none") return;
-
-  // ── 7a. The AI wants to do something (book a call, raise a ticket) ──
-  if (decision.kind === "action" && decision.actionName) {
-    const action = await AiAction.findOne({
-      name: decision.actionName,
-      enabled: true,
-    });
-    if (!action) {
-      console.warn(
-        `[actions] model asked for unknown action "${decision.actionName}"`,
-      );
-      return;
-    }
-
-    // ── Dedup: agar yahi action is conversation mein pehle se succeed ho chuka hai to skip karo ──
-    const { ActionRun } = await import("../models");
-    const priorRun = await ActionRun.findOne({
-      action: action._id,
-      conversation: conversation._id,
-      status: "succeeded",
-    });
-    if (priorRun) {
-      console.log(
-        `[actions] ⚠️ skipping duplicate run of "${action.name}" — already succeeded for conversation ${conversation._id} (runId=${priorRun._id})`,
-      );
-      return;
-    }
-
-    const result = await runAction(action, decision.args || {}, {
-      contact,
-      conversation,
-      number,
-    });
-
-    if (!result.ok) {
-      // Action failed — flag for human team but keep AI running.
-      conversation.status = "pending";
-      conversation.labels = Array.from(
-        new Set([...conversation.labels, "needs-human", "action-failed"]),
-      );
-      await conversation.save();
-      await Message.create({
-        conversation: conversation._id,
-        contact: contact._id,
-        number: number._id,
-        direction: "out",
-        author: "system",
-        type: "text",
-        text: `Action "${action.displayName}" failed: ${result.error}. Customer was NOT told it succeeded — please follow up.`,
-        status: "sent",
-      });
-      const holding = settings.escalationMessage;
-      if (holding) {
-        const r = await wa.sendText(number, waId, holding);
-        await Message.create({
-          conversation: conversation._id,
-          contact: contact._id,
-          number: number._id,
-          direction: "out",
-          author: "system",
-          type: "text",
-          text: holding,
-          waMessageId: r.waMessageId,
-          status: r.error ? "failed" : "sent",
-        });
-      }
-      emit("conversation:update", conversation.toObject());
-      return;
-    }
-
-    const confirmation =
-      result.confirmation || "All done — our team will be in touch shortly.";
-    const sendRes = await wa.sendText(number, waId, confirmation);
-    const confMsg = await Message.create({
-      conversation: conversation._id,
-      contact: contact._id,
-      number: number._id,
-      direction: "out",
-      author: "ai",
-      type: "text",
-      text: confirmation,
-      waMessageId: sendRes.waMessageId,
-      status: sendRes.error ? "failed" : "sent",
-      error: sendRes.error,
-    });
-    if (!sendRes.error) await recordNumberSend(number);
-
+  if (decision.offline) {
     await Message.create({
       conversation: conversation._id,
       contact: contact._id,
@@ -469,23 +303,11 @@ export async function handleInboundMessage(
       direction: "out",
       author: "system",
       type: "text",
-      text:
-        `Action "${action.displayName}" completed` +
-        (result.ticketReference ? ` — ticket ${result.ticketReference}` : "") +
-        `. Sent to ${action.webhookUrl.replace(/^https?:\/\//, "").split("/")[0]}.`,
+      text: `⚠️ One Mind could not be reached (${decision.error || "no answer"}). The customer was asked to message again in a few minutes.`,
       status: "sent",
     });
-
-    conversation.lastMessageAt = new Date();
-    conversation.lastMessagePreview = confirmation.slice(0, 120);
-    await conversation.save();
-    emit("message:new", {
-      message: confMsg.toObject(),
-      conversation: conversation.toObject(),
-    });
-    emit("conversation:update", conversation.toObject());
-    return;
   }
+  if (decision.kind === "none") return;
 
   // ── 7b. Ordinary text reply ───────────────────────────
   const draft = decision.text || "";
@@ -666,23 +488,23 @@ export async function resolveNumber(
 }
 
 /**
- * Leave a visible trace in the Wabiz inbox of what the brain booked, and label the
+ * Leave a visible trace in the Wabiz inbox of what One Mind booked, and label the
  * conversation so follow-up nudges stop once a call is booked.
  */
 async function noteBrainAction(
   conversation: any,
   contact: any,
   number: any,
-  name: string,
-  result: import("./brain").BrainActionResult,
+  result: BrainAction,
 ): Promise<void> {
+  const name = result.name;
   try {
     const isSales = /sales/.test(name);
     let text: string;
     if (result.ok && (result.status === "booked" || result.status === "raised")) {
       text = isSales
-        ? `📞 Sales call booked by the brain for ${result.slot?.label ?? "the chosen slot"} IST (booking #${result.bookingId}) — on the sales calendar and in the CRM.`
-        : `🆘 Support call-back raised by the brain (booking #${result.bookingId}) — on the support calendar and in the CRM.`;
+        ? `📞 Sales call booked for ${result.slot?.label ?? "the chosen time"} IST (booking #${result.bookingId}) — in the CRM, by One Mind.`
+        : `🆘 Support call-back raised by One Mind (booking #${result.bookingId}) — in the CRM.`;
       conversation.labels = Array.from(
         new Set([...(conversation.labels || []), isSales ? "Call-Booked" : "support-call-raised"]),
       );
