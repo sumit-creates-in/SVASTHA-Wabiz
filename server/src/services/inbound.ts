@@ -501,7 +501,14 @@ async function noteBrainAction(
   try {
     const isSales = /sales/.test(name);
     let text: string;
-    if (result.ok && (result.status === "booked" || result.status === "raised")) {
+    if (name === "report_business_opportunity") {
+      if (result.ok && result.status === "already_reported") return; // nothing new to note
+      text = result.ok
+        ? `🤝 Business opportunity — One Mind emailed it to Sumit (#${result.opportunityId}).`
+        : `⚠️ Business opportunity could not be recorded: ${result.error}`;
+      conversation.labels = Array.from(new Set([...(conversation.labels || []), "business-opportunity"]));
+      await conversation.save();
+    } else if (result.ok && (result.status === "booked" || result.status === "raised")) {
       text = isSales
         ? `📞 Sales call booked for ${result.slot?.label ?? "the chosen time"} IST (booking #${result.bookingId}) — in the CRM, by One Mind.`
         : `🆘 Support call-back raised by One Mind (booking #${result.bookingId}) — in the CRM.`;

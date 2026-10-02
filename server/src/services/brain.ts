@@ -18,6 +18,8 @@ export interface BrainAction {
   status?: string;
   error?: string;
   bookingId?: number;
+  /** report_business_opportunity: the brand/agency proposal emailed to the owner */
+  opportunityId?: number;
   slot?: { start: string; label: string };
   dueAt?: string;
 }
