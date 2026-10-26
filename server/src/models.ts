@@ -37,7 +37,9 @@ const userSchema = new Schema<IUser>(
   },
   { timestamps: true },
 );
-export const User = model<IUser>("User", userSchema);
+// Own collection: the Automator app uses the same database and its own "users"
+// collection (argon2 hashes, role "owner"). Sharing it broke sign-in in both apps.
+export const User = model<IUser>("User", userSchema, "wabiz_users");
 
 // ── WABA phone number (multi-number support) ────────────
 export interface IWabaNumber extends Document {

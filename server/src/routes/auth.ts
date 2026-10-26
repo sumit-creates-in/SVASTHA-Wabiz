@@ -22,8 +22,9 @@ authRouter.post("/login", async (req, res) => {
     return;
   }
 
-  user.lastLoginAt = new Date();
-  await user.save();
+  // updateOne, not save(): a validation error on save() is unhandled here and
+  // takes the whole server down (that is what made sign-in return 502).
+  await User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } });
 
   const token = jwt.sign(
     { sub: String(user._id), role: user.role },
